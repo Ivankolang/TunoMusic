@@ -181,12 +181,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                        Text(if (tab == 0) "Твоя музыка" else "Поиск музыки", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; else -> "Поиск музыки" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
                     }
                     Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
                 }
                 Spacer(Modifier.height(16.dp))
-                if (tab == 0) {
+                if (tab == 0 || tab == 1) {
                     OutlinedTextField(
                         value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Поиск в медиатеке", color = Muted) },
@@ -197,11 +197,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     )
                     Spacer(Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Медиатека", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                        Text(if (tab == 1) "Избранные треки" else "Медиатека", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                         Spacer(Modifier.weight(1f))
                         Text("${tracks.size} треков", color = Muted, fontSize = 12.sp)
                     }
-                    val filtered = tracks.filter { it.customTitle.contains(query, true) || it.originalArtist.contains(query, true) }
+                    val filtered = tracks.filter { (tab != 1 || it.isFavorite) && (it.customTitle.contains(query, true) || it.originalArtist.contains(query, true)) }
                     if (tracks.isEmpty()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.LibraryMusic, null, tint = Green, modifier = Modifier.size(52.dp))
@@ -233,11 +233,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     }
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = service == "SoundCloud", onClick = { service = "SoundCloud"; serviceUrl = "" },
-                            label = { Text("SoundCloud") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) })
-                        FilterChip(selected = service == "Spotify", onClick = { service = "Spotify"; serviceUrl = "" },
-                            label = { Text("Spotify") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("SoundCloud", color = Green, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("Встроенный поиск", color = Muted, fontSize = 11.sp)
                     }
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
@@ -247,8 +248,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
                         trailingIcon = { IconButton(onClick = {
                             val q = URLEncoder.encode(query.trim(), "UTF-8")
-                            if (q.isNotBlank()) serviceUrl = if (service == "Spotify")
-                                "https://open.spotify.com/search/$q" else "https://soundcloud.com/search/sounds?q=$q"
+                            if (q.isNotBlank()) serviceUrl = "https://soundcloud.com/search/sounds?q=$q"
                         }) { Icon(Icons.Default.ArrowForward, null, tint = Green) } },
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green)
@@ -267,7 +267,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
                                 settings.mediaPlaybackRequiresUserGesture = false
-                                settings.userAgentString = settings.userAgentString.replace("; wv", "")
+                                setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
                                 webViewClient = WebViewClient()
                                 loadUrl(serviceUrl)
                             } },
@@ -289,6 +289,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
+                    icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 },
                     icon = { Icon(Icons.Default.Search, null) }, label = { Text("Поиск") })
             }
         }
@@ -318,7 +320,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
-            .background(Color(0xFF1B2B21), RoundedCornerShape(17.dp)).clickable(onClick = onOpen).padding(10.dp),
+            .background(Color(0xFF17251D), RoundedCornerShape(17.dp)).clickable(onClick = onOpen).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         CoverThumb(track.cover, 44)
@@ -339,7 +341,7 @@ private fun FullPlayerScreen(
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
     onFavorite: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().background(Color(0xFF63352F)).padding(horizontal = 24.dp)) {
+    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF1B3526), Night, Night))).padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(30.dp)) }
@@ -382,7 +384,7 @@ private fun FullPlayerScreen(
             IconButton(onClick = onFavorite) { Icon(if (track?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (track?.isFavorite == true) Green else Color.White, modifier = Modifier.size(28.dp)) }
             IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).background(Color.White, CircleShape)) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF63352F), modifier = Modifier.size(42.dp))
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF14291D), modifier = Modifier.size(42.dp))
             }
             IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
