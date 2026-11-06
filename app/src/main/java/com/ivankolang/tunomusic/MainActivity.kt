@@ -118,6 +118,7 @@ private fun TunoScreen(
     var query by remember { mutableStateOf("") }
     val controller = controllerProvider()
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
                      else Manifest.permission.READ_EXTERNAL_STORAGE
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -125,9 +126,9 @@ private fun TunoScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(
-                androidx.compose.ui.platform.LocalContext.current, permission
-            ) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+            tracks = loadTracks()
+        }
     }
 
     val filtered = tracks.filter {
