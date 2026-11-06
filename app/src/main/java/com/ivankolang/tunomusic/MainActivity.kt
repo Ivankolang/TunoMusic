@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -348,6 +350,14 @@ private fun FullPlayerScreen(
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
     onFavorite: () -> Unit
 ) {
+    val entranceScale = remember { Animatable(0.94f) }
+    val entranceAlpha = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.coroutineScope {
+            launch { entranceScale.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
+            launch { entranceAlpha.animateTo(1f, tween(360)) }
+        }
+    }
     val motion = rememberInfiniteTransition(label = "player_motion")
     val albumRotation by motion.animateFloat(
         initialValue = 0f, targetValue = 360f,
@@ -359,7 +369,11 @@ private fun FullPlayerScreen(
         animationSpec = infiniteRepeatable(animation = tween(900), repeatMode = RepeatMode.Reverse),
         label = "play_button_pulse"
     )
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF1B3526), Night, Night))).padding(horizontal = 24.dp)) {
+    Column(Modifier.fillMaxSize().graphicsLayer {
+        scaleX = entranceScale.value
+        scaleY = entranceScale.value
+        alpha = entranceAlpha.value
+    }.background(Brush.verticalGradient(listOf(Color(0xFF1B3526), Night, Night))).padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(30.dp)) }
