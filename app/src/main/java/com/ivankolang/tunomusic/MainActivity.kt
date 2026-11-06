@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -368,10 +369,8 @@ private fun toMediaItem(track: AudioTrack) = MediaItem.Builder().setUri(track.ur
 @Composable
 private fun CoverThumb(uri: String?, size: Int) {
     if (uri != null) {
-        androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(android.R.drawable.ic_media_play),
-            contentDescription = null, modifier = Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp))
-        )
+        AsyncImage(model = uri, contentDescription = "Обложка трека",
+            modifier = Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)))
     } else {
         Box(Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.MusicNote, null, tint = Green)
@@ -381,10 +380,15 @@ private fun CoverThumb(uri: String?, size: Int) {
 
 @Composable
 private fun CoverLarge(uri: String?) {
-    Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 18.dp)
-        .background(Brush.linearGradient(listOf(Color(0xFF315B43), Color(0xFF1A2B21), Color(0xFF4A6D55))),
-            RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
-        Icon(Icons.Default.MusicNote, null, tint = Green.copy(alpha = 0.65f), modifier = Modifier.size(110.dp))
+    if (uri != null) {
+        AsyncImage(model = uri, contentDescription = "Обложка трека",
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 18.dp))
+    } else {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 18.dp)
+            .background(Brush.linearGradient(listOf(Color(0xFF315B43), Color(0xFF1A2B21), Color(0xFF4A6D55))),
+                RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.MusicNote, null, tint = Green.copy(alpha = 0.65f), modifier = Modifier.size(110.dp))
+        }
     }
 }
 
