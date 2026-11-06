@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,27 +67,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val token = SessionToken(this, ComponentName(this, MusicPlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, token).buildAsync()
-        controllerFuture?.addListener({
-            runCatching { mediaController = controllerFuture?.get() }
-        }, ContextCompat.getMainExecutor(this))
-
+        controllerFuture?.addListener({ runCatching { mediaController = controllerFuture?.get() } },
+            ContextCompat.getMainExecutor(this))
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 background = Night, surface = Panel, primary = Green,
                 onBackground = Color.White, onSurface = Color.White
             )) {
-                TunoScreen(
-                    context = this,
-                    controllerProvider = { mediaController },
-                    loadTracks = { loadAudioTracks() }
-                )
+                TunoScreen(this, { mediaController }, { loadAudioTracks() })
             }
         }
     }
 
     private fun loadAudioTracks(): List<AudioTrack> {
         val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
-                         else Manifest.permission.READ_EXTERNAL_STORAGE
+            else Manifest.permission.READ_EXTERNAL_STORAGE
         if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) return emptyList()
         val prefs = getSharedPreferences("track_edits", Context.MODE_PRIVATE)
         val result = mutableListOf<AudioTrack>()
@@ -101,12 +96,8 @@ class MainActivity : ComponentActivity() {
                 val id = cursor.getLong(idCol)
                 val title = cursor.getString(titleCol) ?: "Без названия"
                 val artist = cursor.getString(artistCol)?.takeUnless { it == "<unknown>" } ?: "Неизвестный исполнитель"
-                val uri = Uri.withAppendedPath(collection, id.toString())
-                result += AudioTrack(
-                    id, title, artist, uri,
-                    prefs.getString("title_$id", title) ?: title,
-                    prefs.getString("cover_$id", null)
-                )
+                result += AudioTrack(id, title, artist, Uri.withAppendedPath(collection, id.toString()),
+                    prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null))
             }
         }
         return result
@@ -120,42 +111,35 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun TunoScreen(
-    context: Context,
-    controllerProvider: () -> MediaController?,
-    loadTracks: () -> List<AudioTrack>
-) {
+private fun TunoScreen(context: Context, controllerProvider: () -> MediaController?, loadTracks: () -> List<AudioTrack>) {
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(0) }
     var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
+    var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-    var serviceQuery by remember { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
-    var serviceUrl by remember { mutableStateOf("https://soundcloud.com") }
+    var serviceUrl by remember { mutableStateOf("") }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
-    val controller = controllerProvider()
-    val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
-                     else Manifest.permission.READ_EXTERNAL_STORAGE
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        tracks = loadTracks()
-    }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
+    val controller = controllerProvider()
+    val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tracks = loadTracks() }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = coverTarget
         if (uri != null && target != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit()
-                .putString("cover_${target.id}", uri.toString()).apply()
+            context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit().putString("cover_${target.id}", uri.toString()).apply()
             tracks = loadTracks()
             selectedTrack = tracks.firstOrNull { it.id == target.id }
-            coverTarget = null
         }
+        coverTarget = null
     }
 
+    BackHandler(enabled = fullPlayer) { fullPlayer = false }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
     }
@@ -172,171 +156,134 @@ private fun TunoScreen(
         }
     }
 
-    val filtered = tracks.filter { it.customTitle.contains(query, true) || it.originalArtist.contains(query, true) }
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))) {
-        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(24.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("TUNO MUSIC", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
-                    Text(when (selectedTab) { 0 -> "Медиатека"; 1 -> "Плеер"; else -> service },
-                        color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+    if (fullPlayer) {
+        FullPlayerScreen(
+            track = selectedTrack, playing = playing, position = position, duration = duration,
+            onBack = { fullPlayer = false },
+            onPlayPause = { controllerProvider()?.let { if (it.isPlaying) it.pause() else it.play() } },
+            onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } },
+            onPrevious = { controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() } },
+            onSeek = { controllerProvider()?.seekTo((it * 1000).toLong()) },
+            onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
+            onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } }
+        )
+    } else {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))) {
+            Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
+                Spacer(Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                        Text(if (tab == 0) "Твоя музыка" else "Поиск музыки", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
                 }
-                Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            when (selectedTab) {
-                0 -> {
+                Spacer(Modifier.height(16.dp))
+                if (tab == 0) {
                     OutlinedTextField(
                         value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Поиск музыки", color = Muted) },
-                        leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        singleLine = true, shape = RoundedCornerShape(18.dp),
+                        placeholder = { Text("Поиск в медиатеке", color = Muted) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) }, singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green)
                     )
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Все треки", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Медиатека", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("${tracks.size} треков", color = Muted, fontSize = 13.sp)
+                        Text("${tracks.size} треков", color = Muted, fontSize = 12.sp)
                     }
+                    val filtered = tracks.filter { it.customTitle.contains(query, true) || it.originalArtist.contains(query, true) }
                     if (tracks.isEmpty()) {
-                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.LibraryMusic, null, tint = Green, modifier = Modifier.size(52.dp))
                             Text("Музыка пока не найдена", color = Color.White, fontWeight = FontWeight.SemiBold)
                             Text("Разреши доступ к аудиофайлам телефона", color = Muted, fontSize = 12.sp)
                             Button(onClick = { permissionLauncher.launch(permission) }) { Text("Открыть медиатеку") }
                         }
                     } else {
-                        LazyColumn(contentPadding = PaddingValues(bottom = 14.dp)) {
+                        LazyColumn(contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(filtered, key = { it.id }) { track ->
                                 Row(Modifier.fillMaxWidth().clickable {
                                     selectedTrack = track
-                                    val c = controllerProvider()
-                                    if (c != null) {
-                                        val index = tracks.indexOf(track)
-                                        c.setMediaItems(tracks.map { toMediaItem(it) }, index, 0L)
-                                        c.prepare(); c.play(); playing = true
+                                    controllerProvider()?.let { c ->
+                                        c.setMediaItems(tracks.map { toMediaItem(it) }, tracks.indexOf(track), 0L)
+                                        c.prepare(); c.play()
                                     }
-                                    selectedTab = 1
                                 }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                     CoverThumb(track.cover, 48)
                                     Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            fontWeight = FontWeight.Medium)
+                                        Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                                         Text(track.originalArtist, color = Muted, fontSize = 12.sp, maxLines = 1)
                                     }
-                                    IconButton(onClick = {
-                                        editingTrack = track; editTitle = track.customTitle
-                                    }) { Icon(Icons.Default.Edit, "Переименовать", tint = Muted) }
-                                    Icon(Icons.Default.PlayCircle, null, tint = Green, modifier = Modifier.size(26.dp))
+                                    IconButton(onClick = { editingTrack = track; editTitle = track.customTitle }) {
+                                        Icon(Icons.Default.MoreVert, null, tint = Muted)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                1 -> {
-                    val track = selectedTrack
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Spacer(Modifier.height(8.dp))
-                        if (track == null) {
-                            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                Text("Выбери трек в медиатеке", color = Muted)
-                            }
-                        } else {
-                            CoverLarge(track.cover)
-                            Spacer(Modifier.height(18.dp))
-                            Text(track.customTitle, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(track.originalArtist, color = Muted, fontSize = 14.sp)
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                AssistChip(onClick = { coverTarget = track; coverPicker.launch(arrayOf("image/*")) },
-                                    label = { Text("Обложка") }, leadingIcon = { Icon(Icons.Default.Image, null) })
-                                AssistChip(onClick = { editingTrack = track; editTitle = track.customTitle },
-                                    label = { Text("Переименовать") }, leadingIcon = { Icon(Icons.Default.Edit, null) })
-                            }
-                            Spacer(Modifier.height(20.dp))
-                            Slider(value = if (duration > 0) position.coerceIn(0f, duration) else 0f,
-                                onValueChange = { position = it },
-                                onValueChangeFinished = { controllerProvider()?.seekTo((position * 1000).toLong()) },
-                                valueRange = 0f..(duration.coerceAtLeast(1f)), colors = SliderDefaults.colors(thumbColor = Green, activeTrackColor = Green))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(formatTime(position), color = Muted, fontSize = 12.sp)
-                                Text(formatTime(duration), color = Muted, fontSize = 12.sp)
-                            }
-                            Spacer(Modifier.height(18.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { controllerProvider()?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }) {
-                                    Icon(Icons.Default.Shuffle, null, tint = Green, modifier = Modifier.size(25.dp))
-                                }
-                                IconButton(onClick = { controllerProvider()?.seekToPreviousMediaItem() }) {
-                                    Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(34.dp))
-                                }
-                                IconButton(onClick = {
-                                    controllerProvider()?.let { if (it.isPlaying) it.pause() else it.play() }
-                                }, modifier = Modifier.size(68.dp).background(Green, CircleShape)) {
-                                    Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Night,
-                                        modifier = Modifier.size(42.dp))
-                                }
-                                IconButton(onClick = { controllerProvider()?.seekToNextMediaItem() }) {
-                                    Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(34.dp))
-                                }
-                                IconButton(onClick = { controllerProvider()?.let { it.repeatMode =
-                                    if (it.repeatMode == androidx.media3.common.Player.REPEAT_MODE_OFF) androidx.media3.common.Player.REPEAT_MODE_ALL
-                                    else androidx.media3.common.Player.REPEAT_MODE_OFF } }) {
-                                    Icon(Icons.Default.Repeat, null, tint = Green, modifier = Modifier.size(25.dp))
-                                }
-                            }
-                            Spacer(Modifier.height(24.dp))
-                        }
-                    }
-                }
-                else -> {
+                } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = service == "SoundCloud", onClick = {
-                            service = "SoundCloud"; serviceUrl = "https://soundcloud.com"
-                        }, label = { Text("SoundCloud") })
-                        FilterChip(selected = service == "Spotify", onClick = {
-                            service = "Spotify"; serviceUrl = "https://open.spotify.com"
-                        }, label = { Text("Spotify") })
+                        FilterChip(selected = service == "SoundCloud", onClick = { service = "SoundCloud"; serviceUrl = "" },
+                            label = { Text("SoundCloud") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) })
+                        FilterChip(selected = service == "Spotify", onClick = { service = "Spotify"; serviceUrl = "" },
+                            label = { Text("Spotify") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
                     }
-                    OutlinedTextField(value = serviceQuery, onValueChange = { serviceQuery = it },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        placeholder = { Text("Найти трек или исполнителя", color = Muted) },
-                        trailingIcon = { IconButton(onClick = {
-                            val q = URLEncoder.encode(serviceQuery, "UTF-8")
-                            serviceUrl = if (service == "Spotify") "https://open.spotify.com/search/$q"
-                                else "https://soundcloud.com/search/sounds?q=$q"
-                        }) { Icon(Icons.Default.Search, null, tint = Green) } },
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Muted,
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White))
                     Spacer(Modifier.height(12.dp))
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize().background(Color.White, RoundedCornerShape(16.dp)),
-                        factory = { ctx -> WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.mediaPlaybackRequiresUserGesture = true
-                            webViewClient = WebViewClient()
-                            loadUrl(serviceUrl)
-                        } },
-                        update = { web -> if (web.tag != serviceUrl) { web.tag = serviceUrl; web.loadUrl(serviceUrl) } }
+                    OutlinedTextField(
+                        value = query, onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
+                        trailingIcon = { IconButton(onClick = {
+                            val q = URLEncoder.encode(query.trim(), "UTF-8")
+                            if (q.isNotBlank()) serviceUrl = if (service == "Spotify")
+                                "https://open.spotify.com/search/$q" else "https://soundcloud.com/search/sounds?q=$q"
+                        }) { Icon(Icons.Default.ArrowForward, null, tint = Green) } },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green)
                     )
+                    Spacer(Modifier.height(12.dp))
+                    if (serviceUrl.isBlank()) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
+                            Text("Ищи музыку в выбранном сервисе", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Результаты откроются здесь, внутри Tuno", color = Muted, fontSize = 12.sp)
+                        }
+                    } else {
+                        AndroidView(
+                            modifier = Modifier.fillMaxSize().background(Color.White, RoundedCornerShape(16.dp)),
+                            factory = { ctx -> WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.mediaPlaybackRequiresUserGesture = false
+                                settings.userAgentString = settings.userAgentString.replace("; wv", "")
+                                webViewClient = WebViewClient()
+                                loadUrl(serviceUrl)
+                            } },
+                            update = { web -> if (web.tag != serviceUrl) { web.tag = serviceUrl; web.loadUrl(serviceUrl) } }
+                        )
+                    }
                 }
             }
-        }
-        NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
-            NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 },
-                icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Музыка") })
-            NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 },
-                icon = { Icon(Icons.Default.Album, null) }, label = { Text("Плеер") })
-            NavigationBarItem(selected = selectedTab == 2, onClick = { selectedTab = 2 },
-                icon = { Icon(Icons.Default.Language, null) }, label = { Text("Сервисы") })
+
+            if (selectedTrack != null) {
+                MiniPlayer(
+                    track = selectedTrack!!, playing = playing,
+                    onOpen = { fullPlayer = true },
+                    onPlayPause = { controllerProvider()?.let { if (it.isPlaying) it.pause() else it.play() } },
+                    onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } }
+                )
+            }
+            NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
+                    icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
+                    icon = { Icon(Icons.Default.Search, null) }, label = { Text("Поиск") })
+            }
         }
     }
 
@@ -344,8 +291,7 @@ private fun TunoScreen(
         AlertDialog(
             onDismissRequest = { editingTrack = null },
             title = { Text("Переименовать трек") },
-            text = { OutlinedTextField(value = editTitle, onValueChange = { editTitle = it }, singleLine = true,
-                label = { Text("Название") }) },
+            text = { OutlinedTextField(value = editTitle, onValueChange = { editTitle = it }, singleLine = true, label = { Text("Название") }) },
             confirmButton = {
                 TextButton(onClick = {
                     val target = editingTrack!!
@@ -361,36 +307,95 @@ private fun TunoScreen(
     }
 }
 
+@Composable
+private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            .background(Color(0xFF1B2B21), RoundedCornerShape(17.dp)).clickable(onClick = onOpen).padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CoverThumb(track.cover, 44)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(track.originalArtist, color = Muted, maxLines = 1, fontSize = 11.sp)
+        }
+        IconButton(onClick = onPlayPause) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Green) }
+        IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+    }
+}
+
+@Composable
+private fun FullPlayerScreen(
+    track: AudioTrack?, playing: Boolean, position: Float, duration: Float,
+    onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
+    onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF63352F)).padding(horizontal = 24.dp)) {
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(30.dp)) }
+            Spacer(Modifier.weight(1f))
+            Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
+        }
+        Spacer(Modifier.height(18.dp))
+        Box(Modifier.fillMaxWidth().weight(0.9f).clickable(onClick = onCover), contentAlignment = Alignment.Center) {
+            if (track?.cover != null) {
+                AsyncImage(model = track.cover, contentDescription = "Обложка", modifier = Modifier.fillMaxSize())
+            } else {
+                Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFFB85F60), Color(0xFFB66A4C), Color(0xFF9A6B9B))),
+                    RoundedCornerShape(30.dp)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.MusicNote, null, tint = Color.White.copy(alpha = 0.24f), modifier = Modifier.size(150.dp))
+                }
+            }
+            Surface(Modifier.align(Alignment.BottomEnd).padding(12.dp), color = Color.Black.copy(alpha = 0.25f), shape = CircleShape) {
+                Icon(Icons.Default.Edit, "Изменить обложку", tint = Color.White, modifier = Modifier.padding(10.dp).size(18.dp))
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(track?.customTitle ?: "Выбери трек", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(track?.originalArtist ?: "Неизвестный исполнитель", color = Color.White.copy(alpha = 0.72f), modifier = Modifier.weight(1f), maxLines = 1)
+            Text("Обложка", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.clickable(onClick = onCover).padding(8.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Slider(value = if (duration > 0) position.coerceIn(0f, duration) else 0f,
+            onValueChange = { onSeek(it) }, valueRange = 0f..duration.coerceAtLeast(1f),
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(position), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+            Text(formatTime(duration), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(22.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = {}) { Icon(Icons.Default.FavoriteBorder, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+            IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).background(Color.White, CircleShape)) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF63352F), modifier = Modifier.size(42.dp))
+            }
+            IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
+            IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+        }
+        Spacer(Modifier.height(26.dp))
+    }
+}
+
+@Composable
+private fun CoverThumb(uri: String?, size: Int) {
+    if (uri != null) AsyncImage(model = uri, contentDescription = "Обложка трека",
+        modifier = Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)))
+    else Box(Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        Icon(Icons.Default.MusicNote, null, tint = Green)
+    }
+}
+
 private fun toMediaItem(track: AudioTrack) = MediaItem.Builder().setUri(track.uri).setMediaMetadata(
     MediaMetadata.Builder().setTitle(track.customTitle).setArtist(track.originalArtist)
         .setArtworkUri(track.cover?.let { Uri.parse(it) }).build()
 ).build()
-
-@Composable
-private fun CoverThumb(uri: String?, size: Int) {
-    if (uri != null) {
-        AsyncImage(model = uri, contentDescription = "Обложка трека",
-            modifier = Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)))
-    } else {
-        Box(Modifier.size(size.dp).background(Panel, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.MusicNote, null, tint = Green)
-        }
-    }
-}
-
-@Composable
-private fun CoverLarge(uri: String?) {
-    if (uri != null) {
-        AsyncImage(model = uri, contentDescription = "Обложка трека",
-            modifier = Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 18.dp))
-    } else {
-        Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 18.dp)
-            .background(Brush.linearGradient(listOf(Color(0xFF315B43), Color(0xFF1A2B21), Color(0xFF4A6D55))),
-                RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.MusicNote, null, tint = Green.copy(alpha = 0.65f), modifier = Modifier.size(110.dp))
-        }
-    }
-}
 
 private fun formatTime(seconds: Float): String {
     val total = seconds.toInt().coerceAtLeast(0)
