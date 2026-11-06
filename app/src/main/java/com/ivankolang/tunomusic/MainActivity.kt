@@ -56,7 +56,8 @@ data class AudioTrack(
     val originalArtist: String,
     val uri: Uri,
     val customTitle: String = originalTitle,
-    val cover: String? = null
+    val cover: String? = null,
+    val isFavorite: Boolean = false
 )
 
 class MainActivity : ComponentActivity() {
@@ -97,7 +98,7 @@ class MainActivity : ComponentActivity() {
                 val title = cursor.getString(titleCol) ?: "Без названия"
                 val artist = cursor.getString(artistCol)?.takeUnless { it == "<unknown>" } ?: "Неизвестный исполнитель"
                 result += AudioTrack(id, title, artist, Uri.withAppendedPath(collection, id.toString()),
-                    prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null))
+                    prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null), prefs.getBoolean("favorite_$id", false))
             }
         }
         return result
@@ -165,7 +166,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             onPrevious = { controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() } },
             onSeek = { controllerProvider()?.seekTo((it * 1000).toLong()) },
             onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
-            onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } }
+            onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } },
+            onFavorite = { selectedTrack?.let { track ->
+                val value = !track.isFavorite
+                context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit().putBoolean("favorite_${track.id}", value).apply()
+                tracks = loadTracks()
+                selectedTrack = tracks.firstOrNull { it.id == track.id }
+            } }
         )
     } else {
         Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))) {
@@ -329,7 +336,8 @@ private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, 
 private fun FullPlayerScreen(
     track: AudioTrack?, playing: Boolean, position: Float, duration: Float,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
-    onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit
+    onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
+    onFavorite: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().background(Color(0xFF63352F)).padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(20.dp))
@@ -371,7 +379,7 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = {}) { Icon(Icons.Default.FavoriteBorder, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+            IconButton(onClick = onFavorite) { Icon(if (track?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (track?.isFavorite == true) Green else Color.White, modifier = Modifier.size(28.dp)) }
             IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).background(Color.White, CircleShape)) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF63352F), modifier = Modifier.size(42.dp))
