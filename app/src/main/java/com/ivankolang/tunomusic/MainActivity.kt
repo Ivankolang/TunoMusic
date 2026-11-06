@@ -117,7 +117,6 @@ private fun TunoScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     val controller = controllerProvider()
-
     val context = androidx.compose.ui.platform.LocalContext.current
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
                      else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -224,11 +223,11 @@ private fun TunoScreen(
         } else {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 PlatformCard("YouTube Music", "Открывать треки в официальном приложении", Icons.Default.PlayCircle) {
-                    openPlatform("com.google.android.apps.youtube.music")
+                    openPlatform(context, "com.google.android.apps.youtube.music")
                 }
                 Spacer(Modifier.height(12.dp))
                 PlatformCard("Spotify", "Открывать Spotify и его музыкальную библиотеку", Icons.Default.Headphones) {
-                    openPlatform("com.spotify.music")
+                    openPlatform(context, "com.spotify.music")
                 }
                 Spacer(Modifier.height(16.dp))
                 Text("Платформы управляют своей музыкой самостоятельно. Прямое воспроизведение внутри Tuno зависит от официальных API и разрешений сервисов.",
@@ -301,14 +300,14 @@ private fun PlayerPanel(
     }
 }
 
-private fun MainActivity.openPlatform(packageName: String) {
-    val launch = packageManager.getLaunchIntentForPackage(packageName)
-    if (launch != null) startActivity(launch)
+private fun openPlatform(context: android.content.Context, packageName: String) {
+    val launch = context.packageManager.getLaunchIntentForPackage(packageName)
+    if (launch != null) context.startActivity(launch)
     else {
         val url = when (packageName) {
             "com.spotify.music" -> "https://open.spotify.com"
             else -> "https://music.youtube.com"
         }
-        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url)))
+        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url)))
     }
 }
