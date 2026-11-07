@@ -261,6 +261,17 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
                   });
                 });
                 window.tunoSeekTo=function(position){widget.seekTo(position);};
+                window.tunoLoad=function(trackUrl){
+                  if(!trackUrl)return false;
+                  widget.load(trackUrl,{
+                    auto_play:true,
+                    show_comments:false,
+                    visual:true,
+                    color:"9BE7B1",
+                    callback:function(){widget.play();}
+                  });
+                  return true;
+                };
                 window.tunoNext=function(){widget.next();};
                 window.tunoPrevious=function(){widget.prev();};
                 window.tunoToggle=function(){widget.toggle();};
@@ -430,12 +441,29 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         tab = 2
         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
         val nextUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
-        serviceUrl = nextUrl
-        // Reload the actual widget immediately; updating Compose metadata alone is not enough.
-        soundCloudWebView?.let { web ->
-            web.tag = nextUrl
-            web.loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(nextUrl),
-                "text/html", "UTF-8", null)
+        // Reuse the existing SoundCloud widget when possible. Reload the HTML only
+        // when the widget has not been created yet; widget.load() switches the
+        // actual audio source without destroying the current player instance.
+        val existingWeb = soundCloudWebView
+        if (existingWeb == null) {
+            serviceUrl = nextUrl
+        } else {
+            existingWeb.tag = nextUrl
+            val trackJson = JSONObject.quote(cloud.url)
+            existingWeb.evaluateJavascript(
+                "window.tunoLoad ? (window.tunoLoad($trackJson), true) : false"
+            ) { result ->
+                if (result != "true") {
+                    existingWeb.loadDataWithBaseURL(
+                        "https://w.soundcloud.com/",
+                        soundCloudWidgetHtml(nextUrl),
+                        "text/html",
+                        "UTF-8",
+                        null
+                    )
+                }
+            }
+            serviceUrl = nextUrl
         }
     }
 
