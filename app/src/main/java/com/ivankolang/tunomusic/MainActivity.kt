@@ -48,6 +48,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -153,6 +154,28 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     BackHandler(enabled = fullPlayer) { fullPlayer = false }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+    }
+    DisposableEffect(controller, tracks) {
+        val player = controller
+        val listener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val id = mediaItem?.mediaId?.toLongOrNull()
+                if (id != null) selectedTrack = tracks.firstOrNull { it.id == id }
+                else if (mediaItem == null) selectedTrack = null
+            }
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                val current = player?.currentMediaItem ?: return
+                val id = current.mediaId.toLongOrNull() ?: return
+                val base = tracks.firstOrNull { it.id == id } ?: return
+                selectedTrack = base.copy(
+                    customTitle = mediaMetadata.title?.toString() ?: base.customTitle,
+                    originalArtist = mediaMetadata.artist?.toString() ?: base.originalArtist,
+                    cover = mediaMetadata.artworkUri?.toString() ?: base.cover
+                )
+            }
+        }
+        player?.addListener(listener)
+        onDispose { player?.removeListener(listener) }
     }
     LaunchedEffect(controller) {
         while (true) {
@@ -287,7 +310,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 }
             }
 
-            if (selectedTrack != null) {
+            if (selectedTrack != null && tab != 2) {
                 MiniPlayer(
                     track = selectedTrack!!, playing = playing,
                     onOpen = { fullPlayer = true },
@@ -435,7 +458,7 @@ private fun CoverThumb(uri: String?, size: Int) {
     }
 }
 
-private fun toMediaItem(track: AudioTrack) = MediaItem.Builder().setUri(track.uri).setMediaMetadata(
+private fun toMediaItem(track: AudioTrack) = MediaItem.Builder().setUri(track.uri).setMediaId(track.id.toString()).setMediaMetadata(
     MediaMetadata.Builder().setTitle(track.customTitle).setArtist(track.originalArtist)
         .setArtworkUri(track.cover?.let { Uri.parse(it) }).build()
 ).build()
