@@ -183,6 +183,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var pendingTrackIds by remember { mutableStateOf(emptySet<Long>()) }
     val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
     var serviceUrl by rememberSaveable { mutableStateOf("") }
+    var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -201,8 +202,15 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         coverTarget = null
     }
 
-    BackHandler(enabled = fullPlayer || activePlaylistId != null) {
-        if (fullPlayer) fullPlayer = false else activePlaylistId = null
+    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && soundCloudEmbed)) {
+        when {
+            fullPlayer -> fullPlayer = false
+            tab == 2 && soundCloudEmbed -> {
+                soundCloudEmbed = false
+                serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8")
+            }
+            else -> activePlaylistId = null
+        }
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
@@ -337,11 +345,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     }
                 } else if (tab == 2) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                        if (soundCloudEmbed) {
+                            IconButton(onClick = {
+                                soundCloudEmbed = false
+                                serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8")
+                            }) { Icon(Icons.Default.ArrowBack, null, tint = Color.White) }
+                        } else {
+                            Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                        }
                         Spacer(Modifier.width(8.dp))
-                        Text("SoundCloud", color = Green, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(if (soundCloudEmbed) "Сейчас играет" else "SoundCloud",
+                            color = Green, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("Встроенный поиск", color = Muted, fontSize = 11.sp)
+                        Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск", color = Muted, fontSize = 11.sp)
                     }
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
@@ -380,6 +396,25 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     settings.useWideViewPort = true
                                     settings.loadWithOverviewMode = true
                                     webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                                            val uri = request.url
+                                            val host = uri.host?.lowercase().orEmpty()
+                                            val path = uri.path.orEmpty()
+                                            val reserved = listOf("/search/", "/discover", "/you", "/stream", "/upload",
+                                                "/signin", "/signup", "/settings", "/pages", "/charts", "/popular", "/stations")
+                                            val isSoundPage = (host == "soundcloud.com" || host == "www.soundcloud.com") &&
+                                                path.count { it == '/' } >= 2 &&
+                                                reserved.none { path.startsWith(it) }
+                                            if (request.isForMainFrame && isSoundPage) {
+                                                val trackUrl = uri.toString()
+                                                val encoded = URLEncoder.encode(trackUrl, "UTF-8")
+                                                soundCloudEmbed = true
+                                                view.loadUrl("https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true")
+                                                return true
+                                            }
+                                            return false
+                                        }
+
                                         override fun onPageFinished(view: WebView, url: String) {
                                             super.onPageFinished(view, url)
                                             val css = """
