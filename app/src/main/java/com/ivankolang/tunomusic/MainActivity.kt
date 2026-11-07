@@ -195,9 +195,11 @@ private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     fun onResults(json: String) = onResults.invoke(json)
 }
 
-private class SoundCloudWidgetBridge(private val onPlayback: (Boolean) -> Unit) {
+private class SoundCloudWidgetBridge(private val onPlayback: (Boolean) -> Unit, private val onProgress: (Long, Long) -> Unit) {
     @JavascriptInterface
     fun onPlayback(playing: Boolean) = onPlayback.invoke(playing)
+    @JavascriptInterface
+    fun onProgress(position: Long, duration: Long) = onProgress.invoke(position, duration)
 }
 
 private fun soundCloudWidgetHtml(widgetUrl: String): String {
@@ -227,6 +229,10 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
                 widget.bind(SC.Widget.Events.PAUSE,function(){
                   if(window.TunoWidget)window.TunoWidget.onPlayback(false);
                 });
+                widget.bind(SC.Widget.Events.PLAY_PROGRESS,function(data){
+                  if(window.TunoWidget)window.TunoWidget.onProgress(data.currentPosition||0,data.duration||0);
+                });
+                window.tunoSeekTo=function(position){widget.seekTo(position);};
                 window.tunoToggle=function(){widget.toggle();};
                 window.tunoPlay=function(){widget.play();};
                 window.tunoPause=function(){widget.pause();};
@@ -345,6 +351,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
     var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
     var soundCloudPlaying by remember { mutableStateOf(false) }
+    var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
+    var soundCloudPosition by remember { mutableLongStateOf(0L) }
+    var soundCloudDuration by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -529,6 +538,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     Row(Modifier.fillMaxWidth().clickable {
                                         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
                                         tab = 2
+                                        soundCloudTrack = cloud
+                                        soundCloudPosition = 0L
+                                        soundCloudDuration = 0L
                                         soundCloudEmbed = true
                                         serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -726,9 +738,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         webChromeClient = android.webkit.WebChromeClient()
                                         settings.useWideViewPort = true
                                         settings.loadWithOverviewMode = true
-                                        addJavascriptInterface(SoundCloudWidgetBridge { isPlaying ->
-                                            context.mainExecutor.execute { soundCloudPlaying = isPlaying }
-                                        }, "TunoWidget")
+                                        addJavascriptInterface(SoundCloudWidgetBridge(
+                                            onPlayback = { isPlaying -> context.mainExecutor.execute { soundCloudPlaying = isPlaying } },
+                                            onProgress = { current, total -> context.mainExecutor.execute {
+                                                soundCloudPosition = current.coerceAtLeast(0L)
+                                                soundCloudDuration = total.coerceAtLeast(0L)
+                                            } }
+                                        ), "TunoWidget")
                                         addJavascriptInterface(SoundCloudBridge { raw ->
                                             context.mainExecutor.execute {
                                                 runCatching {
@@ -938,6 +954,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                             Row(
                                                 Modifier.fillMaxWidth().clickable {
                                                     val encoded = URLEncoder.encode(result.url, "UTF-8")
+                                                    soundCloudTrack = result
+                                                    soundCloudPosition = 0L
+                                                    soundCloudDuration = 0L
                                                     soundCloudEmbed = true
                                                     serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
                                                 }.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1119,6 +1138,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 }
             }
 
+            if (soundCloudTrack != null && tab == 2 && soundCloudEmbed) {
+                CloudMiniPlayer(soundCloudTrack!!, soundCloudPlaying, { fullPlayer = true }, {
+                    soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
+                })
+            }
             if (selectedTrack != null && tab != 2) {
                 MiniPlayer(
                     track = selectedTrack!!, playing = playing,
@@ -1253,6 +1277,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 }
 
 @Composable
+private fun CloudMiniPlayer(track: SoundCloudResult, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).background(Color(0xFF17251D), RoundedCornerShape(17.dp)).clickable(onClick = onOpen).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        CoverThumb(track.artwork, 44)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(track.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text("SoundCloud · " + track.artist, color = Muted, maxLines = 1, fontSize = 11.sp)
+        }
+        IconButton(onClick = onPlayPause) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Green) }
+    }
+}
+
+@Composable
 private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1273,10 +1310,15 @@ private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, 
 @Composable
 private fun FullPlayerScreen(
     track: AudioTrack?, playing: Boolean, position: Float, duration: Float,
+    cloudTrack: SoundCloudResult? = null, cloudFavorite: Boolean = false,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
     onFavorite: () -> Unit
 ) {
+    val displayTitle = cloudTrack?.title ?: track?.customTitle ?: "Выбери трек"
+    val displayArtist = cloudTrack?.artist ?: track?.originalArtist ?: "Неизвестный исполнитель"
+    val displayCover = cloudTrack?.artwork ?: track?.cover
+    val displayFavorite = if (cloudTrack != null) cloudFavorite else track?.isFavorite == true
     val motion = rememberInfiniteTransition(label = "player_motion")
     val albumRotation by motion.animateFloat(
         initialValue = 0f, targetValue = 360f,
@@ -1301,8 +1343,8 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().weight(0.9f).clickable(onClick = onCover), contentAlignment = Alignment.Center) {
-            if (track?.cover != null) {
-                AsyncImage(model = track.cover, contentDescription = "Обложка", modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = if (playing) albumRotation else 0f })
+            if (displayCover != null) {
+                AsyncImage(model = displayCover, contentDescription = "Обложка", modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = if (playing) albumRotation else 0f })
             } else {
                 Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFFB85F60), Color(0xFFB66A4C), Color(0xFF9A6B9B))),
                     RoundedCornerShape(30.dp)), contentAlignment = Alignment.Center) {
@@ -1314,10 +1356,10 @@ private fun FullPlayerScreen(
             }
         }
         Spacer(Modifier.height(20.dp))
-        Text(track?.customTitle ?: "Выбери трек", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold,
+        Text(displayTitle, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(track?.originalArtist ?: "Неизвестный исполнитель", color = Color.White.copy(alpha = 0.72f), modifier = Modifier.weight(1f), maxLines = 1)
+            Text(displayArtist, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.weight(1f), maxLines = 1)
             Text("Обложка", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.clickable(onClick = onCover).padding(8.dp))
         }
         Spacer(Modifier.height(16.dp))
@@ -1330,7 +1372,7 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onFavorite) { Icon(if (track?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (track?.isFavorite == true) Green else Color.White, modifier = Modifier.size(28.dp)) }
+            IconButton(onClick = onFavorite) { Icon(if (displayFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (displayFavorite) Green else Color.White, modifier = Modifier.size(28.dp)) }
             IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).graphicsLayer { scaleX = if (playing) pulse else 1f; scaleY = if (playing) pulse else 1f }.background(Color.White, CircleShape)) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF14291D), modifier = Modifier.size(42.dp))
