@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.JavascriptInterface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -47,6 +48,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -105,6 +107,13 @@ private fun savePlaylists(context: Context, playlists: List<Playlist>) {
 }
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>)
+data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?)
+
+private class SoundCloudBridge(private val onResults: (String) -> Unit) {
+    @JavascriptInterface
+    fun onResults(json: String) = onResults.invoke(json)
+}
+
 
 data class AudioTrack(
     val id: Long,
@@ -191,6 +200,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
+    var soundCloudResults by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -421,193 +431,160 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     if (serviceUrl.isBlank()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
-                            Text("Ищи музыку в выбранном сервисе", color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text("Результаты откроются здесь, внутри Tuno", color = Muted, fontSize = 12.sp)
+                            Text("Ищи музыку в SoundCloud", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Результаты появятся отдельным списком в Tuno", color = Muted, fontSize = 12.sp)
                         }
                     } else {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Night)
-                                .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp)),
-                            factory = { ctx ->
-                                WebView(ctx).apply {
-                                    tag = serviceUrl
-                                    setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
-                                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
-                                    isVerticalScrollBarEnabled = false
-                                    isHorizontalScrollBarEnabled = false
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.mediaPlaybackRequiresUserGesture = false
-                                    settings.loadsImagesAutomatically = true
-                                    settings.useWideViewPort = true
-                                    settings.loadWithOverviewMode = true
-                                    webViewClient = object : WebViewClient() {
-                                        override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
-                                            val uri = request.url
-                                            val host = uri.host?.lowercase().orEmpty()
-                                            val path = uri.path.orEmpty()
-                                            val reserved = listOf("/search/", "/discover", "/you", "/stream", "/upload",
-                                                "/signin", "/signup", "/settings", "/pages", "/charts", "/popular", "/stations")
-                                            val isSoundPage = (host == "soundcloud.com" || host == "www.soundcloud.com") &&
-                                                path.count { it == '/' } >= 2 &&
-                                                reserved.none { path.startsWith(it) }
-                                            if (request.isForMainFrame && isSoundPage) {
-                                                val trackUrl = uri.toString()
-                                                val encoded = URLEncoder.encode(trackUrl, "UTF-8")
-                                                soundCloudEmbed = true
-                                                view.loadUrl("https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true")
-                                                return true
-                                            }
-                                            return false
-                                        }
-
-                                        override fun onPageFinished(view: WebView, url: String) {
-                                            super.onPageFinished(view, url)
-                                            val css = """
-                                                :root {
-                                                  color-scheme: dark !important;
-                                                  --sc-orange: #9BE7B1 !important;
-                                                  --sc-primary: #9BE7B1 !important;
-                                                }
-                                                html, body, #app, #app > div, .l-container, .l-content,
-                                                .discover, .search, .searchList, .soundList,
-                                                .playControls, .listenPage, .listenPage__content {
-                                                  background: #080B0A !important;
-                                                  color: #F2F7F3 !important;
-                                                }
-                                                body, button, input, textarea {
-                                                  font-family: Roboto, Arial, sans-serif !important;
-                                                }
-                                                a, .sc-link, .sc-link-light {
-                                                  color: #9BE7B1 !important;
-                                                }
-                                                button, [role=button], .sc-button {
-                                                  border-radius: 12px !important;
-                                                }
-                                                input, textarea, .textfield {
-                                                  background: #151B18 !important;
-                                                  color: #F2F7F3 !important;
-                                                  border: 1px solid #344139 !important;
-                                                }
-                                                .sound, .sound__body, .sound__content, .soundList__item,
-                                                .searchList__item, .listenEngagement, .userInfo,
-                                                .sound__footer, .sound__header, .playlist,
-                                                .playlist__item, .userBadge {
-                                                  background-color: #111915 !important;
-                                                  color: #F2F7F3 !important;
-                                                  border-color: #26352C !important;
-                                                }
-                                                .soundTitle__title, .soundTitle__username, .sound__title,
-                                                .sound__username, .sc-text, .sc-type-light,
-                                                h1, h2, h3, p, span, label {
-                                                  color: #E8F1EA !important;
-                                                }
-                                                .sc-button-cta, .sc-button-cta.sc-button,
-                                                .sc-button-primary, .playButton,
-                                                .playButton g, .sc-button-play {
-                                                  background-color: #9BE7B1 !important;
-                                                  color: #08110B !important;
-                                                  fill: #08110B !important;
-                                                }
-                                                .header, .l-header, .header__inner,
-                                                .header__navMenu, .header__userNav {
-                                                  background: #080B0A !important;
-                                                  border-color: #26352C !important;
-                                                }
-
-                                                /* Tuno shell: keep the SoundCloud page focused on results. */
-                                                header nav, nav[role="navigation"],
-                                                [role="navigation"], footer,
-                                                .header__navMenu, .header__userNav,
-                                                .mobileNav, .mobileNav__container,
-                                                .mobileNav__items, .mobileNavigation,
-                                                .mobile-navigation, .bottomBar,
-                                                .bottomBar__navigation, .sc-navigation,
-                                                .navigationBar, .footer, .footer__content,
-                                                [data-testid*="navigation"],
-                                                [data-testid*="tab-bar"],
-                                                [aria-label*="navigation" i],
-                                                [aria-label*="bottom bar" i] {
-                                                  display: none !important;
-                                                  visibility: hidden !important;
-                                                  height: 0 !important;
-                                                  min-height: 0 !important;
-                                                  max-height: 0 !important;
-                                                  overflow: hidden !important;
-                                                  pointer-events: none !important;
-                                                }
-
-                                                .sidebar, .l-sidebar, .search__sidebar,
-                                                .discover__sidebar, .promo, .promotion,
-                                                .upsell, .mobileAppBanner,
-                                                [data-testid*="upsell"],
-                                                [data-testid*="promo"] {
-                                                  display: none !important;
-                                                }
-
-                                                .searchList, .soundList, .searchList__item,
-                                                .soundList__item, [class*="searchList"],
-                                                [class*="soundList"] {
-                                                  background: #080B0A !important;
-                                                  border-color: #26352C !important;
-                                                }
-
-                                                /* Remove fixed bottom navigation bars without touching track rows. */
-                                                body > [class*="mobileNav"],
-                                                body > [class*="bottomBar"],
-                                                #app [class*="mobileNav"],
-                                                #app [class*="bottomBar"] {
-                                                  display: none !important;
-                                                }
-
-                                                ::-webkit-scrollbar { width: 4px; height: 4px; }
-                                                ::-webkit-scrollbar-thumb {
-                                                  background: #42634D; border-radius: 8px;
-                                                }
-                                            """.trimIndent()
-                                            val escaped = css.replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")
-                                            val script = """
-                                                (function() {
-                                                  var id = 'tuno-soundcloud-theme';
-                                                  var cssText = '$escaped';
-                                                  function applyTunoTheme() {
-                                                    if (!document.head) return;
-                                                    var style = document.getElementById(id);
-                                                    if (!style) {
-                                                      style = document.createElement('style');
-                                                      style.id = id;
-                                                      document.head.appendChild(style);
+                        Box(Modifier.fillMaxSize()) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Night)
+                                    .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
+                                    .alpha(if (soundCloudEmbed) 1f else 0f),
+                                factory = { ctx ->
+                                    WebView(ctx).apply {
+                                        tag = serviceUrl
+                                        setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
+                                        overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                                        isVerticalScrollBarEnabled = false
+                                        isHorizontalScrollBarEnabled = false
+                                        settings.javaScriptEnabled = true
+                                        settings.domStorageEnabled = true
+                                        settings.mediaPlaybackRequiresUserGesture = false
+                                        settings.loadsImagesAutomatically = true
+                                        settings.useWideViewPort = true
+                                        settings.loadWithOverviewMode = true
+                                        addJavascriptInterface(SoundCloudBridge { raw ->
+                                            context.mainExecutor.execute {
+                                                runCatching {
+                                                    val array = JSONArray(raw)
+                                                    val parsed = buildList {
+                                                        for (i in 0 until array.length()) {
+                                                            val item = array.getJSONObject(i)
+                                                            val url = item.optString("url")
+                                                            val title = item.optString("title")
+                                                            if (url.isNotBlank() && title.isNotBlank()) {
+                                                                add(SoundCloudResult(title, item.optString("artist"), url,
+                                                                    item.optString("artwork").takeIf { it.startsWith("http") }))
+                                                            }
+                                                        }
                                                     }
-                                                    if (style.textContent !== cssText) style.textContent = cssText;
-                                                    document.documentElement.style.background = '#080B0A';
-                                                    if (document.body) document.body.style.background = '#080B0A';
-                                                  }
-                                                  applyTunoTheme();
-                                                  if (!window.__tunoThemeObserver) {
-                                                    window.__tunoThemeObserver = new MutationObserver(function() {
-                                                      if (!document.getElementById(id)) applyTunoTheme();
-                                                    });
-                                                    window.__tunoThemeObserver.observe(document.documentElement, {
-                                                      childList: true, subtree: true
-                                                    });
-                                                  }
-                                                })();
-                                            """.trimIndent()
-                                            view.evaluateJavascript(script, null)
+                                                    if (parsed.isNotEmpty()) soundCloudResults = parsed.distinctBy { it.url }.take(30)
+                                                }
+                                            }
+                                        }, "TunoBridge")
+                                        webViewClient = object : WebViewClient() {
+                                            override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                                                val uri = request.url
+                                                val host = uri.host?.lowercase().orEmpty()
+                                                val path = uri.path.orEmpty()
+                                                val reserved = listOf("/search/", "/discover", "/you", "/stream", "/upload",
+                                                    "/signin", "/signup", "/settings", "/pages", "/charts", "/popular", "/stations")
+                                                val isSoundPage = (host == "soundcloud.com" || host == "www.soundcloud.com") &&
+                                                    path.count { it == '/' } >= 2 && reserved.none { path.startsWith(it) }
+                                                if (request.isForMainFrame && isSoundPage) {
+                                                    val encoded = URLEncoder.encode(uri.toString(), "UTF-8")
+                                                    soundCloudEmbed = true
+                                                    view.loadUrl("https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true")
+                                                    return true
+                                                }
+                                                return false
+                                            }
+
+                                            override fun onPageFinished(view: WebView, url: String) {
+                                                super.onPageFinished(view, url)
+                                                if (url.contains("soundcloud.com/search/")) {
+                                                    val script = """
+                                                        (function() {
+                                                          function collect() {
+                                                            var found = [];
+                                                            var seen = {};
+                                                            document.querySelectorAll('a[href]').forEach(function(a) {
+                                                              var href = a.href || '';
+                                                              if (!/^https?:\\/\\/(www\\.)?soundcloud\\.com\\/[^/]+\\/[^/?#]+/.test(href)) return;
+                                                              if (/\\/(search|discover|you|stream|charts|popular|stations|sets|tags)\\//.test(href)) return;
+                                                              var card = a.closest('.searchList__item, .soundList__item, [class*=soundList], [class*=searchList], article') || a.parentElement;
+                                                              var titleNode = card && (card.querySelector('.soundTitle__title, [class*=soundTitle], [class*=trackTitle], [class*=title]'));
+                                                              var title = (titleNode && titleNode.innerText || a.getAttribute('aria-label') || a.innerText || '').trim();
+                                                              title = title.replace(/\\s+/g, ' ');
+                                                              if (!title || title.length < 2 || title.length > 140 || seen[href]) return;
+                                                              var artistNode = card && card.querySelector('.soundTitle__username, [class*=username], [class*=artist]');
+                                                              var img = card && card.querySelector('img');
+                                                              seen[href] = true;
+                                                              found.push({title:title, artist:(artistNode && artistNode.innerText || '').trim(),
+                                                                url:href.split('?')[0], artwork:img ? (img.currentSrc || img.src || '') : ''});
+                                                            });
+                                                            if (window.TunoBridge && found.length) window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
+                                                          }
+                                                          collect();
+                                                          if (!window.__tunoResultObserver) {
+                                                            window.__tunoResultObserver = new MutationObserver(collect);
+                                                            window.__tunoResultObserver.observe(document.body, {childList:true,subtree:true});
+                                                          }
+                                                        })();
+                                                    """.trimIndent()
+                                                    view.evaluateJavascript(script, null)
+                                                }
+                                            }
+                                        }
+                                        loadUrl(serviceUrl)
+                                    }
+                                },
+                                update = { web ->
+                                    if (web.tag != serviceUrl) {
+                                        web.tag = serviceUrl
+                                        web.loadUrl(serviceUrl)
+                                    }
+                                }
+                            )
+                            if (!soundCloudEmbed) {
+                                if (soundCloudResults.isEmpty()) {
+                                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center) {
+                                        CircularProgressIndicator(color = Green, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.height(12.dp))
+                                        Text("Загружаем результаты…", color = Muted, fontSize = 13.sp)
+                                        Text("Поиск SoundCloud отображается в списке Tuno", color = Muted, fontSize = 11.sp)
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp))
+                                            .background(Night).border(1.dp, Color(0xFF26352C), RoundedCornerShape(18.dp)),
+                                        contentPadding = PaddingValues(vertical = 8.dp)
+                                    ) {
+                                        items(soundCloudResults, key = { it.url }) { result ->
+                                            Row(
+                                                Modifier.fillMaxWidth().clickable {
+                                                    val encoded = URLEncoder.encode(result.url, "UTF-8")
+                                                    soundCloudEmbed = true
+                                                    serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                                }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                if (result.artwork != null) {
+                                                    AsyncImage(model = result.artwork, contentDescription = null,
+                                                        modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
+                                                } else {
+                                                    Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(Panel),
+                                                        contentAlignment = Alignment.Center) {
+                                                        Icon(Icons.Default.MusicNote, null, tint = Green)
+                                                    }
+                                                }
+                                                Spacer(Modifier.width(12.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(result.title, color = Color.White, maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                                    Text(result.artist.ifBlank { "SoundCloud" }, color = Muted, fontSize = 12.sp,
+                                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                                Icon(Icons.Default.PlayCircle, null, tint = Green, modifier = Modifier.size(28.dp))
+                                            }
                                         }
                                     }
-                                    loadUrl(serviceUrl)
-                                }
-                            },
-                            update = { web ->
-                                if (web.tag != serviceUrl) {
-                                    web.tag = serviceUrl
-                                    web.loadUrl(serviceUrl)
                                 }
                             }
-                        )
+                        }
                     }
                 } else {
                     if (activePlaylist == null) {
