@@ -140,6 +140,8 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) return emptyList()
         val prefs = getSharedPreferences("track_edits", Context.MODE_PRIVATE)
         val result = mutableListOf<AudioTrack>()
+        val hiddenIds = getSharedPreferences("track_edits", Context.MODE_PRIVATE)
+            .getStringSet("hidden_tracks", emptySet()) ?: emptySet()
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST)
         contentResolver.query(collection, projection, "${MediaStore.Audio.Media.IS_MUSIC} != 0", null,
@@ -151,8 +153,10 @@ class MainActivity : ComponentActivity() {
                 val id = cursor.getLong(idCol)
                 val title = cursor.getString(titleCol) ?: "Без названия"
                 val artist = cursor.getString(artistCol)?.takeUnless { it == "<unknown>" } ?: "Неизвестный исполнитель"
-                result += AudioTrack(id, title, artist, Uri.withAppendedPath(collection, id.toString()),
-                    prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null), prefs.getBoolean("favorite_$id", false))
+                if (id.toString() !in hiddenIds) {
+                    result += AudioTrack(id, title, artist, Uri.withAppendedPath(collection, id.toString()),
+                        prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null), prefs.getBoolean("favorite_$id", false))
+                }
             }
         }
         return result
@@ -172,6 +176,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
+    var trackToDelete by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
@@ -272,7 +277,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         FullPlayerScreen(
             track = selectedTrack, playing = playing, position = position, duration = duration,
             onBack = { fullPlayer = false },
-            onPlayPause = { controllerProvider()?.let { if (it.isPlaying) it.pause() else it.play() } },
+            onPlayPause = { controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() } },
             onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } },
             onPrevious = { controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() } },
             onSeek = { controllerProvider()?.seekTo((it * 1000).toLong()) },
@@ -336,8 +341,23 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                                         Text(track.originalArtist, color = Muted, fontSize = 12.sp, maxLines = 1)
                                     }
-                                    IconButton(onClick = { editingTrack = track; editTitle = track.customTitle }) {
-                                        Icon(Icons.Default.MoreVert, null, tint = Muted)
+                                    var menuExpanded by remember { mutableStateOf(false) }
+                                    Box {
+                                        IconButton(onClick = { menuExpanded = true }) {
+                                            Icon(Icons.Default.MoreVert, null, tint = Muted)
+                                        }
+                                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                            DropdownMenuItem(
+                                                text = { Text("Переименовать") },
+                                                onClick = { menuExpanded = false; editingTrack = track; editTitle = track.customTitle },
+                                                leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Удалить из медиатеки") },
+                                                onClick = { menuExpanded = false; trackToDelete = track },
+                                                leadingIcon = { Icon(Icons.Default.DeleteOutline, null) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -624,7 +644,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 MiniPlayer(
                     track = selectedTrack!!, playing = playing,
                     onOpen = { fullPlayer = true },
-                    onPlayPause = { controllerProvider()?.let { if (it.isPlaying) it.pause() else it.play() } },
+                    onPlayPause = { controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() } },
                     onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } }
                 )
             }
@@ -701,6 +721,35 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 }) { Text("Добавить") }
             },
             dismissButton = { TextButton(onClick = { showAddTracks = false }) { Text("Отмена") } }
+        )
+    }
+
+    if (trackToDelete != null) {
+        val target = trackToDelete!!
+        AlertDialog(
+            onDismissRequest = { trackToDelete = null },
+            title = { Text("Удалить трек из Tuno?") },
+            text = { Text("«${target.customTitle}» исчезнет из медиатеки и плейлистов Tuno. Сам аудиофайл останется на телефоне.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val prefs = context.getSharedPreferences("track_edits", Context.MODE_PRIVATE)
+                    val hidden = (prefs.getStringSet("hidden_tracks", emptySet()) ?: emptySet()).toMutableSet()
+                    hidden.add(target.id.toString())
+                    prefs.edit().putStringSet("hidden_tracks", hidden).apply()
+                    playlists = playlists.map { it.copy(trackIds = it.trackIds - target.id) }
+                    savePlaylists(context, playlists)
+                    controllerProvider()?.let { player ->
+                        if (player.currentMediaItem?.mediaId == target.id.toString()) {
+                            player.stop()
+                            player.clearMediaItems()
+                            selectedTrack = null
+                        }
+                    }
+                    tracks = loadTracks()
+                    trackToDelete = null
+                }) { Text("Удалить") }
+            },
+            dismissButton = { TextButton(onClick = { trackToDelete = null }) { Text("Отмена") } }
         )
     }
 
