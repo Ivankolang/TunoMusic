@@ -350,6 +350,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var pendingTrackIds by remember { mutableStateOf(emptySet<Long>()) }
     var pendingCloudUrls by remember { mutableStateOf(emptySet<String>()) }
     var showCloudPlaylistPicker by remember { mutableStateOf(false) }
+    var pendingCloudForNewPlaylist by remember { mutableStateOf<SoundCloudResult?>(null) }
     val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
@@ -1096,7 +1097,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                                  })
                                                          }
                                                          DropdownMenuItem(text = { Text("Создать плейлист") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) },
-                                                             onClick = { cloudMenu = false; tab = 3; playlistName = ""; showCreatePlaylist = true })
+                                                             onClick = { cloudMenu = false; pendingCloudForNewPlaylist = result; tab = 3; playlistName = ""; showCreatePlaylist = true })
                                                     }
                                                 }
                                             }
@@ -1273,7 +1274,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 TextButton(onClick = {
                     val name = playlistName.trim()
                     if (name.isNotEmpty()) {
-                        val created = Playlist(UUID.randomUUID().toString(), name, emptyList())
+                        val created = Playlist(UUID.randomUUID().toString(), name, emptyList(), listOfNotNull(pendingCloudForNewPlaylist))
+                        pendingCloudForNewPlaylist = null
                         playlists = playlists + created
                         savePlaylists(context, playlists)
                         activePlaylistId = created.id
