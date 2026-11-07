@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -167,21 +168,21 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TunoScreen(context: Context, controllerProvider: () -> MediaController?, loadTracks: () -> List<AudioTrack>) {
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
-    var activePlaylistId by remember { mutableStateOf<String?>(null) }
+    var activePlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var playlistName by remember { mutableStateOf("") }
     var showAddTracks by remember { mutableStateOf(false) }
     var pendingTrackIds by remember { mutableStateOf(emptySet<Long>()) }
     val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
-    var serviceUrl by remember { mutableStateOf("") }
+    var serviceUrl by rememberSaveable { mutableStateOf("") }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -382,39 +383,90 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         override fun onPageFinished(view: WebView, url: String) {
                                             super.onPageFinished(view, url)
                                             val css = """
-                                                :root { color-scheme: dark !important; --sc-orange: #9BE7B1 !important; }
-                                                html, body, #app, .l-container, .l-content,
-                                                .discover, .search, .searchList, .soundList {
-                                                  background: #080B0A !important; color: #F2F7F3 !important;
+                                                :root {
+                                                  color-scheme: dark !important;
+                                                  --sc-orange: #9BE7B1 !important;
+                                                  --sc-primary: #9BE7B1 !important;
                                                 }
-                                                body { font-family: Roboto, Arial, sans-serif !important; }
-                                                a { color: #9BE7B1 !important; }
-                                                button, [role=button], input, textarea { border-radius: 12px !important; }
-                                                input, textarea {
-                                                  background: #151B18 !important; color: #F2F7F3 !important;
+                                                html, body, #app, #app > div, .l-container, .l-content,
+                                                .discover, .search, .searchList, .soundList,
+                                                .playControls, .listenPage, .listenPage__content {
+                                                  background: #080B0A !important;
+                                                  color: #F2F7F3 !important;
+                                                }
+                                                body, button, input, textarea {
+                                                  font-family: Roboto, Arial, sans-serif !important;
+                                                }
+                                                a, .sc-link, .sc-link-light {
+                                                  color: #9BE7B1 !important;
+                                                }
+                                                button, [role=button], .sc-button {
+                                                  border-radius: 12px !important;
+                                                }
+                                                input, textarea, .textfield {
+                                                  background: #151B18 !important;
+                                                  color: #F2F7F3 !important;
                                                   border: 1px solid #344139 !important;
                                                 }
                                                 .sound, .sound__body, .sound__content, .soundList__item,
-                                                .searchList__item, .listenEngagement, .userInfo {
-                                                  background-color: #111915 !important; color: #F2F7F3 !important;
+                                                .searchList__item, .listenEngagement, .userInfo,
+                                                .sound__footer, .sound__header, .playlist,
+                                                .playlist__item, .userBadge {
+                                                  background-color: #111915 !important;
+                                                  color: #F2F7F3 !important;
                                                   border-color: #26352C !important;
                                                 }
                                                 .soundTitle__title, .soundTitle__username, .sound__title,
-                                                .sound__username, .sc-text, h1, h2, h3, p, span {
+                                                .sound__username, .sc-text, .sc-type-light,
+                                                h1, h2, h3, p, span, label {
                                                   color: #E8F1EA !important;
                                                 }
-                                                .announcement, .banner, .adBanner, .ad-banner,
-                                                [data-testid*=ad], [class*=cookie], [class*=Cookie] {
-                                                  background: #080B0A !important;
+                                                .sc-button-cta, .sc-button-cta.sc-button,
+                                                .sc-button-primary, .playButton,
+                                                .playButton g, .sc-button-play {
+                                                  background-color: #9BE7B1 !important;
+                                                  color: #08110B !important;
+                                                  fill: #08110B !important;
                                                 }
-                                                ::-webkit-scrollbar { width: 4px; }
-                                                ::-webkit-scrollbar-thumb { background: #42634D; border-radius: 8px; }
+                                                .header, .l-header, .header__inner,
+                                                .header__navMenu, .header__userNav {
+                                                  background: #080B0A !important;
+                                                  border-color: #26352C !important;
+                                                }
+                                                ::-webkit-scrollbar { width: 4px; height: 4px; }
+                                                ::-webkit-scrollbar-thumb {
+                                                  background: #42634D; border-radius: 8px;
+                                                }
                                             """.trimIndent()
-                                            val escaped = css.replace("\\", "\\\\").replace("'", "\\'")
-                                            view.evaluateJavascript(
-                                                "(function(){var id='tuno-soundcloud-theme';var old=document.getElementById(id);if(old)old.remove();var s=document.createElement('style');s.id=id;s.textContent='$escaped';document.head.appendChild(s);document.documentElement.style.background='#080B0A';document.body.style.background='#080B0A';})();",
-                                                null
-                                            )
+                                            val escaped = css.replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")
+                                            val script = """
+                                                (function() {
+                                                  var id = 'tuno-soundcloud-theme';
+                                                  var cssText = '$escaped';
+                                                  function applyTunoTheme() {
+                                                    if (!document.head) return;
+                                                    var style = document.getElementById(id);
+                                                    if (!style) {
+                                                      style = document.createElement('style');
+                                                      style.id = id;
+                                                      document.head.appendChild(style);
+                                                    }
+                                                    if (style.textContent !== cssText) style.textContent = cssText;
+                                                    document.documentElement.style.background = '#080B0A';
+                                                    if (document.body) document.body.style.background = '#080B0A';
+                                                  }
+                                                  applyTunoTheme();
+                                                  if (!window.__tunoThemeObserver) {
+                                                    window.__tunoThemeObserver = new MutationObserver(function() {
+                                                      if (!document.getElementById(id)) applyTunoTheme();
+                                                    });
+                                                    window.__tunoThemeObserver.observe(document.documentElement, {
+                                                      childList: true, subtree: true
+                                                    });
+                                                  }
+                                                })();
+                                            """.trimIndent()
+                                            view.evaluateJavascript(script, null)                                            )
                                         }
                                     }
                                     loadUrl(serviceUrl)
