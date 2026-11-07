@@ -233,6 +233,8 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
                   if(window.TunoWidget)window.TunoWidget.onProgress(data.currentPosition||0,data.duration||0);
                 });
                 window.tunoSeekTo=function(position){widget.seekTo(position);};
+                window.tunoNext=function(){widget.next();};
+                window.tunoPrevious=function(){widget.prev();};
                 window.tunoToggle=function(){widget.toggle();};
                 window.tunoPlay=function(){widget.play();};
                 window.tunoPause=function(){widget.pause();};
@@ -447,20 +449,44 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     ) { showFullPlayer ->
     if (showFullPlayer) {
         FullPlayerScreen(
-            track = selectedTrack, playing = playing, position = position, duration = duration,
+            track = selectedTrack,
+            cloudTrack = if (soundCloudEmbed) soundCloudTrack else null,
+            cloudFavorite = soundCloudTrack?.let { cloud -> cloudFavorites.any { it.url == cloud.url } } == true,
+            playing = if (soundCloudEmbed) soundCloudPlaying else playing,
+            position = if (soundCloudEmbed) soundCloudPosition / 1000f else position,
+            duration = if (soundCloudEmbed) soundCloudDuration / 1000f else duration,
             onBack = { fullPlayer = false },
-            onPlayPause = { controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() } },
-            onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } },
-            onPrevious = { controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() } },
-            onSeek = { controllerProvider()?.seekTo((it * 1000).toLong()) },
+            onPlayPause = {
+                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
+                else controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() }
+            },
+            onNext = {
+                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoNext && window.tunoNext()", null)
+                else controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }
+            },
+            onPrevious = {
+                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoPrevious && window.tunoPrevious()", null)
+                else controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() }
+            },
+            onSeek = {
+                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoSeekTo && window.tunoSeekTo(" + (it * 1000).toLong() + ")", null)
+                else controllerProvider()?.seekTo((it * 1000).toLong())
+            },
             onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
             onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } },
-            onFavorite = { selectedTrack?.let { track ->
-                val value = !track.isFavorite
-                context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit().putBoolean("favorite_${track.id}", value).apply()
-                tracks = loadTracks()
-                selectedTrack = tracks.firstOrNull { it.id == track.id }
-            } }
+            onFavorite = {
+                val cloud = soundCloudTrack
+                if (soundCloudEmbed && cloud != null) {
+                    cloudFavorites = if (cloudFavorites.any { it.url == cloud.url }) cloudFavorites.filterNot { it.url == cloud.url }
+                        else cloudFavorites + cloud
+                    saveCloudFavorites(context, cloudFavorites)
+                } else selectedTrack?.let { track ->
+                    val value = !track.isFavorite
+                    context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit().putBoolean("favorite_${track.id}", value).apply()
+                    tracks = loadTracks()
+                    selectedTrack = tracks.firstOrNull { it.id == track.id }
+                }
+            }
         )
     } else {
         Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))) {
