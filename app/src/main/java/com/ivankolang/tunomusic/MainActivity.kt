@@ -1112,7 +1112,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Твои плейлисты", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                             Spacer(Modifier.weight(1f))
-                            FilledTonalButton(onClick = { playlistName = ""; showCreatePlaylist = true }) {
+                            FilledTonalButton(onClick = { pendingCloudForNewPlaylist = null; playlistName = ""; showCreatePlaylist = true }) {
                                 Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(5.dp))
                                 Text("Создать")
@@ -1125,7 +1125,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Text("Плейлистов пока нет", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Text("Создай подборку любимых треков", color = Muted, fontSize = 12.sp)
                                 Spacer(Modifier.height(10.dp))
-                                Button(onClick = { playlistName = ""; showCreatePlaylist = true }) {
+                                Button(onClick = { pendingCloudForNewPlaylist = null; playlistName = ""; showCreatePlaylist = true }) {
                                     Icon(Icons.Default.Add, null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Новый плейлист")
@@ -1284,7 +1284,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     showCreatePlaylist = false
                 }) { Text("Создать") }
             },
-            dismissButton = { TextButton(onClick = { showCreatePlaylist = false }) { Text("Отмена") } }
+            dismissButton = { TextButton(onClick = { pendingCloudForNewPlaylist = null; showCreatePlaylist = false }) { Text("Отмена") } }
         )
     }
 
