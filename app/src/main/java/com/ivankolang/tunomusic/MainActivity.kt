@@ -89,7 +89,16 @@ private fun readPlaylists(context: Context): List<Playlist> {
                 val trackIds = buildList {
                     for (j in 0 until ids.length()) add(ids.optLong(j))
                 }
-                add(Playlist(item.optString("id"), item.optString("name"), trackIds))
+                val cloudArray = item.optJSONArray("soundCloudTracks") ?: JSONArray()
+                val cloudTracks = buildList {
+                    for (j in 0 until cloudArray.length()) {
+                        val t = cloudArray.optJSONObject(j) ?: continue
+                        val url = t.optString("url")
+                        if (url.isNotBlank()) add(SoundCloudResult(t.optString("title"), t.optString("artist"), url,
+                            t.optString("artwork").takeIf { it.startsWith("http") }))
+                    }
+                }
+                add(Playlist(item.optString("id"), item.optString("name"), trackIds, cloudTracks))
             }
         }
     }.getOrDefault(emptyList())
@@ -100,14 +109,39 @@ private fun savePlaylists(context: Context, playlists: List<Playlist>) {
     playlists.forEach { playlist ->
         val ids = JSONArray()
         playlist.trackIds.forEach { trackId -> ids.put(trackId) }
-        array.put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("trackIds", ids))
+        val cloud = JSONArray()
+        playlist.soundCloudTracks.forEach { t ->
+            cloud.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: ""))
+        }
+        array.put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("trackIds", ids).put("soundCloudTracks", cloud))
     }
     context.getSharedPreferences("tuno_playlists", Context.MODE_PRIVATE).edit()
         .putString("items", array.toString()).apply()
 }
 
-data class Playlist(val id: String, val name: String, val trackIds: List<Long>)
+data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
 data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?)
+
+private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
+    val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
+    return runCatching {
+        val a = JSONArray(raw)
+        buildList {
+            for (i in 0 until a.length()) {
+                val t = a.optJSONObject(i) ?: continue
+                val url = t.optString("url")
+                if (url.isNotBlank()) add(SoundCloudResult(t.optString("title"), t.optString("artist"), url,
+                    t.optString("artwork").takeIf { it.startsWith("http") }))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun saveCloudFavorites(context: Context, tracks: List<SoundCloudResult>) {
+    val a = JSONArray()
+    tracks.forEach { t -> a.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: "")) }
+    context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).edit().putString("favorites", a.toString()).apply()
+}
 
 private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     @JavascriptInterface
@@ -192,6 +226,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var query by rememberSaveable { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
+    var cloudFavorites by remember { mutableStateOf(readCloudFavorites(context)) }
     var activePlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var playlistName by remember { mutableStateOf("") }
@@ -330,7 +365,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Text("${tracks.size} треков", color = Muted, fontSize = 12.sp)
                     }
                     val filtered = tracks.filter { (tab != 1 || it.isFavorite) && (it.customTitle.contains(query, true) || it.originalArtist.contains(query, true)) }
-                    if (tracks.isEmpty()) {
+                    if (tracks.isEmpty() && !(tab == 1 && cloudFavorites.isNotEmpty())) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.LibraryMusic, null, tint = Green, modifier = Modifier.size(52.dp))
                             Text("Музыка пока не найдена", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -369,6 +404,26 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 onClick = { menuExpanded = false; trackToDelete = track },
                                                 leadingIcon = { Icon(Icons.Default.DeleteOutline, null) }
                                             )
+                                        }
+                                    }
+                                }
+                            }
+                            if (tab == 1) {
+                                items(cloudFavorites.filter { it.title.contains(query, true) || it.artist.contains(query, true) }, key = { "cloud-fav-" + it.url }) { cloud ->
+                                    Row(Modifier.fillMaxWidth().clickable {
+                                        val encoded = URLEncoder.encode(cloud.url, "UTF-8")
+                                        tab = 2
+                                        soundCloudEmbed = true
+                                        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                    }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 48)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(cloud.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("SoundCloud · \${cloud.artist}", color = Muted, fontSize = 12.sp)
+                                        }
+                                        IconButton(onClick = { cloudFavorites = cloudFavorites.filterNot { it.url == cloud.url }; saveCloudFavorites(context, cloudFavorites) }) {
+                                            Icon(Icons.Default.Favorite, null, tint = Green)
                                         }
                                     }
                                 }
@@ -566,6 +621,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         contentPadding = PaddingValues(vertical = 8.dp)
                                     ) {
                                         items(soundCloudResults, key = { it.url }) { result ->
+                                            var cloudMenu by remember { mutableStateOf(false) }
+                                            val cloudIsFavorite = cloudFavorites.any { it.url == result.url }
                                             Row(
                                                 Modifier.fillMaxWidth().clickable {
                                                     val encoded = URLEncoder.encode(result.url, "UTF-8")
@@ -591,6 +648,33 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 }
                                                 Icon(Icons.Default.PlayCircle, null, tint = Green, modifier = Modifier.size(28.dp))
+                                                Box {
+                                                    IconButton(onClick = { cloudMenu = true }) { Icon(Icons.Default.MoreVert, null, tint = Muted) }
+                                                    DropdownMenu(expanded = cloudMenu, onDismissRequest = { cloudMenu = false }) {
+                                                        DropdownMenuItem(
+                                                            text = { Text(if (cloudIsFavorite) "Убрать из избранного" else "В избранное") },
+                                                            leadingIcon = { Icon(Icons.Default.Favorite, null) },
+                                                            onClick = {
+                                                                cloudFavorites = if (cloudIsFavorite) cloudFavorites.filterNot { it.url == result.url }
+                                                                    else (cloudFavorites + result).distinctBy { it.url }
+                                                                saveCloudFavorites(context, cloudFavorites)
+                                                                cloudMenu = false
+                                                            }
+                                                        )
+                                                        if (playlists.isEmpty()) {
+                                                            DropdownMenuItem(text = { Text("Создать плейлист") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) },
+                                                                onClick = { cloudMenu = false; tab = 3; playlistName = ""; showCreatePlaylist = true })
+                                                        } else playlists.forEach { playlist ->
+                                                            DropdownMenuItem(text = { Text("В «\${playlist.name}»") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) },
+                                                                onClick = {
+                                                                    val updated = playlist.copy(soundCloudTracks = (playlist.soundCloudTracks + result).distinctBy { it.url })
+                                                                    playlists = playlists.map { if (it.id == updated.id) updated else it }
+                                                                    savePlaylists(context, playlists)
+                                                                    cloudMenu = false
+                                                                })
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -635,7 +719,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         Column(Modifier.weight(1f)) {
                                             Text(playlist.name, color = Color.White, fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("${playlist.trackIds.size} треков", color = Muted, fontSize = 12.sp)
+                                            Text("${playlist.trackIds.size + playlist.soundCloudTracks.size} треков", color = Muted, fontSize = 12.sp)
                                         }
                                         IconButton(onClick = {
                                             playlists = playlists.filterNot { it.id == playlist.id }
@@ -654,14 +738,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             Column(Modifier.weight(1f)) {
                                 Text(activePlaylist.name, color = Color.White, fontWeight = FontWeight.Bold,
                                     fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${activePlaylist.trackIds.size} треков", color = Muted, fontSize = 12.sp)
+                                Text("${activePlaylist.trackIds.size + activePlaylist.soundCloudTracks.size} треков", color = Muted, fontSize = 12.sp)
                             }
                             IconButton(onClick = { pendingTrackIds = emptySet(); showAddTracks = true }) {
                                 Icon(Icons.Default.Add, null, tint = Green)
                             }
                         }
                         val playlistTracks = tracks.filter { it.id in activePlaylist.trackIds }
-                        if (playlistTracks.isEmpty()) {
+                        if (playlistTracks.isEmpty() && activePlaylist.soundCloudTracks.isEmpty()) {
                             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center) {
                                 Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(48.dp))
@@ -692,6 +776,26 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         }
                                         IconButton(onClick = {
                                             val updated = activePlaylist.copy(trackIds = activePlaylist.trackIds - track.id)
+                                            playlists = playlists.map { if (it.id == updated.id) updated else it }
+                                            savePlaylists(context, playlists)
+                                        }) { Icon(Icons.Default.RemoveCircleOutline, null, tint = Muted) }
+                                    }
+                                }
+                                items(activePlaylist.soundCloudTracks, key = { "playlist-cloud-" + it.url }) { cloud ->
+                                    Row(Modifier.fillMaxWidth().clickable {
+                                        val encoded = URLEncoder.encode(cloud.url, "UTF-8")
+                                        tab = 2
+                                        soundCloudEmbed = true
+                                        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                    }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 46)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(cloud.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("SoundCloud · ${cloud.artist}", color = Muted, fontSize = 12.sp)
+                                        }
+                                        IconButton(onClick = {
+                                            val updated = activePlaylist.copy(soundCloudTracks = activePlaylist.soundCloudTracks.filterNot { it.url == cloud.url })
                                             playlists = playlists.map { if (it.id == updated.id) updated else it }
                                             savePlaylists(context, playlists)
                                         }) { Icon(Icons.Default.RemoveCircleOutline, null, tint = Muted) }
