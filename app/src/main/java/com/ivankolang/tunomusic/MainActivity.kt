@@ -581,14 +581,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                               var clean = (a.href || "").split("?")[0].split("#")[0];
                                                               try {
                                                                 var u = new URL(clean);
-                                                                if (!/(^|\\.)soundcloud\\.com$/.test(u.hostname)) continue;
+                                                                if (u.hostname !== "soundcloud.com" && u.hostname !== "www.soundcloud.com" && u.hostname !== "m.soundcloud.com") continue;
                                                                 var parts = u.pathname.split("/").filter(Boolean);
                                                                 if (parts.length !== 2) continue;
                                                                 if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
                                                                 if (seen[clean]) continue;
                                                                 var card = a.closest("li") || a.closest('[class*="searchList"]') || a.closest('[class*="soundList"]') || a.parentElement || a;
                                                                 var titleNode = card.querySelector('.soundTitle__title, [class*="soundTitle"], [class*="trackTitle"], [data-testid*="title"]');
-                                                                var title = (titleNode && titleNode.innerText || a.getAttribute("aria-label") || a.getAttribute("title") || a.innerText || "").trim().replace(/\\s+/g, " ");
+                                                                var title = (titleNode && titleNode.innerText || a.getAttribute("aria-label") || a.getAttribute("title") || a.innerText || "").trim();
                                                                 if (!title || title.length < 2 || title.length > 160) continue;
                                                                 var artistNode = card.querySelector('.soundTitle__username, [class*="username"], [class*="artist"], [data-testid*="username"]');
                                                                 var img = card.querySelector("img");
