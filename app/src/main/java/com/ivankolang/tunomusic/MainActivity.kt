@@ -1464,6 +1464,11 @@ private fun FullPlayerScreen(
     val displayArtist = cloudTrack?.artist ?: track?.originalArtist ?: "Неизвестный исполнитель"
     val displayCover = cloudTrack?.artwork ?: track?.cover
     val displayFavorite = if (cloudTrack != null) cloudFavorite else track?.isFavorite == true
+    var seekPosition by remember(cloudTrack?.url, track?.id) { mutableFloatStateOf(position) }
+    var isSeeking by remember { mutableStateOf(false) }
+    LaunchedEffect(position, isSeeking) {
+        if (!isSeeking) seekPosition = position
+    }
     val motion = rememberInfiniteTransition(label = "player_motion")
     val albumRotation by motion.animateFloat(
         initialValue = 0f, targetValue = 360f,
@@ -1511,11 +1516,13 @@ private fun FullPlayerScreen(
             if (cloudTrack == null) Text("Обложка", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.clickable(onClick = onCover).padding(8.dp))
         }
         Spacer(Modifier.height(16.dp))
-        Slider(value = if (duration > 0) position.coerceIn(0f, duration) else 0f,
-            onValueChange = { onSeek(it) }, valueRange = 0f..duration.coerceAtLeast(1f),
+        Slider(value = if (duration > 0) seekPosition.coerceIn(0f, duration) else 0f,
+            onValueChange = { seekPosition = it; isSeeking = true },
+            onValueChangeFinished = { onSeek(seekPosition); isSeeking = false },
+            valueRange = 0f..duration.coerceAtLeast(1f),
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(position), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+            Text(formatTime(if (isSeeking) seekPosition else position), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
             Text(formatTime(duration), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
         }
         Spacer(Modifier.height(22.dp))
