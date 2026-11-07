@@ -827,6 +827,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         trailingIcon = { IconButton(onClick = {
                             val q = URLEncoder.encode(query.trim(), "UTF-8")
                             if (q.isNotBlank()) {
+                                // Switch the visible SoundCloud area back to catalog mode.
+                                // If a widget was active, do not let its embed flag make the
+                                // next search URL load as another player instead of a search page.
+                                soundCloudEmbed = false
                                 catalogMode = true
                                 catalogLoading = true
                                 catalogError = false
@@ -877,6 +881,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 "UTF-8"
                                             )
                                             query = listOf(result.title, result.artist).filter { it.isNotBlank() }.joinToString(" ")
+                                            soundCloudEmbed = false
                                             catalogMode = false
                                             soundCloudResults = emptyList()
                                             soundCloudLoadFailed = false
@@ -911,6 +916,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Spacer(Modifier.height(12.dp))
                                 Button(onClick = {
                                     val q = URLEncoder.encode(query.trim(), "UTF-8")
+                                    soundCloudEmbed = false
                                     catalogMode = false
                                     soundCloudResults = emptyList()
                                     soundCloudLoadFailed = false
@@ -1685,14 +1691,10 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().weight(0.9f).clickable(enabled = cloudTrack == null, onClick = onCover), contentAlignment = Alignment.Center) {
-            if (displayCover != null) {
-                AsyncImage(model = displayCover, contentDescription = "Обложка", modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = if (playing) albumRotation else 0f })
-            } else {
-                Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFFB85F60), Color(0xFFB66A4C), Color(0xFF9A6B9B))),
-                    RoundedCornerShape(30.dp)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.MusicNote, null, tint = Color.White.copy(alpha = 0.24f), modifier = Modifier.size(150.dp).graphicsLayer { rotationZ = if (playing) albumRotation else 0f })
-                }
-            }
+            VinylRecord(
+                artwork = displayCover,
+                rotation = if (playing) albumRotation else 0f
+            )
             if (cloudTrack == null) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(12.dp), color = Color.Black.copy(alpha = 0.25f), shape = CircleShape) {
                     Icon(Icons.Default.Edit, "Изменить обложку", tint = Color.White, modifier = Modifier.padding(10.dp).size(18.dp))
@@ -1729,6 +1731,48 @@ private fun FullPlayerScreen(
             } else IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
         }
         Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
+private fun VinylRecord(artwork: String?, rotation: Float) {
+    Box(
+        Modifier.fillMaxWidth(0.88f).aspectRatio(1f)
+            .graphicsLayer { rotationZ = rotation }
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF343A36), Color(0xFF171B19), Color(0xFF050706))
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        // Fine concentric grooves make the artwork read as a vinyl record.
+        repeat(7) { index ->
+            Box(
+                Modifier.fillMaxSize((0.96f - index * 0.085f).coerceAtLeast(0.40f))
+                    .border(1.dp, Color.White.copy(alpha = 0.075f), CircleShape)
+            )
+        }
+        Box(
+            Modifier.fillMaxSize(0.40f)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFFB85F60), Color(0xFF9A6B9B))))
+                .border(2.dp, Color(0xFF0A0D0B), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (artwork != null) {
+                AsyncImage(
+                    model = artwork,
+                    contentDescription = "Обложка трека на виниловой пластинке",
+                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                )
+            } else {
+                Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.fillMaxSize(0.52f))
+            }
+        }
+        Box(Modifier.fillMaxSize(0.035f).background(Color(0xFF080B0A), CircleShape))
     }
 }
 
