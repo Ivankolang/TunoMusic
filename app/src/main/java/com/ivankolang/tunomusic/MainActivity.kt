@@ -516,6 +516,36 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                   background: #080B0A !important;
                                                   border-color: #26352C !important;
                                                 }
+
+                                                /* Keep SoundCloud focused on search results. */
+                                                .header__navMenu, .header__userNav,
+                                                .mobileNav, .mobileNav__container,
+                                                .mobileNav__items, .mobileNavigation,
+                                                .mobile-navigation, .bottomBar,
+                                                .bottomBar__navigation, .sc-navigation,
+                                                .navigationBar, .footer, .footer__content,
+                                                [data-testid="mobile-navigation"],
+                                                [data-testid="bottom-navigation"] {
+                                                  display: none !important;
+                                                  visibility: hidden !important;
+                                                  height: 0 !important;
+                                                  min-height: 0 !important;
+                                                  max-height: 0 !important;
+                                                  overflow: hidden !important;
+                                                }
+
+                                                .sidebar, .l-sidebar, .search__sidebar,
+                                                .discover__sidebar, .promo, .promotion,
+                                                .upsell, .mobileAppBanner {
+                                                  display: none !important;
+                                                }
+
+                                                .searchList, .soundList, .searchList__item,
+                                                .soundList__item {
+                                                  background: #080B0A !important;
+                                                  border-color: #26352C !important;
+                                                }
+
                                                 ::-webkit-scrollbar { width: 4px; height: 4px; }
                                                 ::-webkit-scrollbar-thumb {
                                                   background: #42634D; border-radius: 8px;
