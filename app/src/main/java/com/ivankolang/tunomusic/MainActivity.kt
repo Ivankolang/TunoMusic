@@ -429,7 +429,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudEmbed = true
         tab = 2
         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
-        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+        val nextUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+        serviceUrl = nextUrl
+        // Reload the actual widget immediately; updating Compose metadata alone is not enough.
+        soundCloudWebView?.let { web ->
+            web.tag = nextUrl
+            web.loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(nextUrl),
+                "text/html", "UTF-8", null)
+        }
     }
 
     fun playMixedQueueItem(queue: List<PlaybackQueueItem>, index: Int) {
@@ -468,6 +475,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         if (playbackQueue.isNotEmpty()) playPreviousPlaybackQueueItem()
         else if (soundCloudQueueIndex > 0) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex - 1)
     }
+    val latestPlayNextCloudTrack by rememberUpdatedState { playNextCloudTrack() }
 
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
@@ -959,7 +967,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                     }
                                                 }
                                             },
-                                            onFinished = { context.mainExecutor.execute { playNextCloudTrack() } }
+                                            onFinished = { context.mainExecutor.execute { latestPlayNextCloudTrack() } }
                                         ), "TunoWidget")
                                         addJavascriptInterface(SoundCloudBridge { raw ->
                                             context.mainExecutor.execute {
@@ -1346,7 +1354,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 }
             }
 
-            if (soundCloudTrack != null && tab == 2 && soundCloudEmbed) {
+            if (soundCloudTrack != null && soundCloudEmbed) {
                 CloudMiniPlayer(soundCloudTrack!!, soundCloudPlaying, { fullPlayer = true }, {
                     soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
                 })
