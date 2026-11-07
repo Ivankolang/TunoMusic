@@ -165,6 +165,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 13+ requires explicit permission for media notifications.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+                .launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         val token = SessionToken(this, ComponentName(this, MusicPlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, token).buildAsync()
         controllerFuture?.addListener({ runCatching { mediaController = controllerFuture?.get() } },
