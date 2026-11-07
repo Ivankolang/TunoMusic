@@ -1094,12 +1094,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                             val cloudIsFavorite = cloudFavorites.any { it.url == result.url }
                                             Row(
                                                 Modifier.fillMaxWidth().clickable {
-                                                    val encoded = URLEncoder.encode(result.url, "UTF-8")
-                                                    soundCloudTrack = result
-                                                    soundCloudPosition = 0L
-                                                    soundCloudDuration = 0L
-                                                    soundCloudEmbed = true
-                                                    serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                                    playCloudQueueItem(listOf(result), 0)
                                                 }.padding(horizontal = 14.dp, vertical = 10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
