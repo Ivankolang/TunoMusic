@@ -517,33 +517,49 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                   border-color: #26352C !important;
                                                 }
 
-                                                /* Keep SoundCloud focused on search results. */
+                                                /* Tuno shell: keep the SoundCloud page focused on results. */
+                                                header nav, nav[role="navigation"],
+                                                [role="navigation"], footer,
                                                 .header__navMenu, .header__userNav,
                                                 .mobileNav, .mobileNav__container,
                                                 .mobileNav__items, .mobileNavigation,
                                                 .mobile-navigation, .bottomBar,
                                                 .bottomBar__navigation, .sc-navigation,
                                                 .navigationBar, .footer, .footer__content,
-                                                [data-testid="mobile-navigation"],
-                                                [data-testid="bottom-navigation"] {
+                                                [data-testid*="navigation"],
+                                                [data-testid*="tab-bar"],
+                                                [aria-label*="navigation" i],
+                                                [aria-label*="bottom bar" i] {
                                                   display: none !important;
                                                   visibility: hidden !important;
                                                   height: 0 !important;
                                                   min-height: 0 !important;
                                                   max-height: 0 !important;
                                                   overflow: hidden !important;
+                                                  pointer-events: none !important;
                                                 }
 
                                                 .sidebar, .l-sidebar, .search__sidebar,
                                                 .discover__sidebar, .promo, .promotion,
-                                                .upsell, .mobileAppBanner {
+                                                .upsell, .mobileAppBanner,
+                                                [data-testid*="upsell"],
+                                                [data-testid*="promo"] {
                                                   display: none !important;
                                                 }
 
                                                 .searchList, .soundList, .searchList__item,
-                                                .soundList__item {
+                                                .soundList__item, [class*="searchList"],
+                                                [class*="soundList"] {
                                                   background: #080B0A !important;
                                                   border-color: #26352C !important;
+                                                }
+
+                                                /* Remove fixed bottom navigation bars without touching track rows. */
+                                                body > [class*="mobileNav"],
+                                                body > [class*="bottomBar"],
+                                                #app [class*="mobileNav"],
+                                                #app [class*="bottomBar"] {
+                                                  display: none !important;
                                                 }
 
                                                 ::-webkit-scrollbar { width: 4px; height: 4px; }
