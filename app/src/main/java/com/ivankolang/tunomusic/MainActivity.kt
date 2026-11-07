@@ -148,6 +148,54 @@ private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     fun onResults(json: String) = onResults.invoke(json)
 }
 
+private class SoundCloudWidgetBridge(private val onPlayback: (Boolean) -> Unit) {
+    @JavascriptInterface
+    fun onPlayback(playing: Boolean) = onPlayback.invoke(playing)
+}
+
+private fun soundCloudWidgetHtml(widgetUrl: String): String {
+    val safeUrl = widgetUrl.replace("&", "&amp;").replace("\"", "&quot;")
+    return """
+        <!doctype html>
+        <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+        <style>
+          html,body{margin:0;padding:0;width:100%;height:100%;background:#080b0a;overflow:hidden}
+          iframe{display:block;width:100%;height:100%;border:0}
+        </style></head>
+        <body>
+          <iframe id="sc-widget" allow="autoplay" scrolling="no" src="$safeUrl"></iframe>
+          <script src="https://w.soundcloud.com/player/api.js"></script>
+          <script>
+            (function(){
+              var frame=document.getElementById('sc-widget');
+              function attach(){
+                if(!window.SC||!SC.Widget||!frame)return;
+                var widget=SC.Widget(frame);
+                widget.bind(SC.Widget.Events.READY,function(){
+                  if(window.TunoWidget)window.TunoWidget.onPlayback(false);
+                });
+                widget.bind(SC.Widget.Events.PLAY,function(){
+                  if(window.TunoWidget)window.TunoWidget.onPlayback(true);
+                });
+                widget.bind(SC.Widget.Events.PAUSE,function(){
+                  if(window.TunoWidget)window.TunoWidget.onPlayback(false);
+                });
+                window.tunoToggle=function(){widget.toggle();};
+                window.tunoPlay=function(){widget.play();};
+                window.tunoPause=function(){widget.pause();};
+              }
+              if(window.SC)attach();else{
+                var attempts=0,wait=setInterval(function(){
+                  attempts++;if(window.SC){clearInterval(wait);attach();}
+                  if(attempts>40)clearInterval(wait);
+                },150);
+              }
+            })();
+          </script>
+        </body></html>
+    """.trimIndent()
+}
+
 
 data class AudioTrack(
     val id: Long,
@@ -243,6 +291,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
     var soundCloudResults by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
+    var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
+    var soundCloudPlaying by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -517,6 +567,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     .alpha(if (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
                                 factory = { ctx ->
                                     WebView(ctx).apply {
+                                        soundCloudWebView = this
                                         tag = serviceUrl
                                         setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
                                         overScrollMode = android.view.View.OVER_SCROLL_NEVER
@@ -528,6 +579,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         settings.loadsImagesAutomatically = true
                                         settings.useWideViewPort = true
                                         settings.loadWithOverviewMode = true
+                                        addJavascriptInterface(SoundCloudWidgetBridge { isPlaying ->
+                                            context.mainExecutor.execute { soundCloudPlaying = isPlaying }
+                                        }, "TunoWidget")
                                         addJavascriptInterface(SoundCloudBridge { raw ->
                                             context.mainExecutor.execute {
                                                 runCatching {
@@ -618,16 +672,46 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 }
                                             }
                                         }
-                                        loadUrl(serviceUrl)
+                                        if (soundCloudEmbed) {
+                                            loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
+                                                "text/html", "UTF-8", null)
+                                        } else {
+                                            loadUrl(serviceUrl)
+                                        }
                                     }
                                 },
                                 update = { web ->
                                     if (web.tag != serviceUrl) {
                                         web.tag = serviceUrl
-                                        web.loadUrl(serviceUrl)
+                                        if (soundCloudEmbed) {
+                                            web.loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
+                                                "text/html", "UTF-8", null)
+                                        } else {
+                                            web.loadUrl(serviceUrl)
+                                        }
                                     }
                                 }
                             )
+                            if (soundCloudEmbed) {
+                                Row(
+                                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                        .padding(12.dp).background(Color(0xEE111915), RoundedCornerShape(18.dp))
+                                        .border(1.dp, Color(0xFF344139), RoundedCornerShape(18.dp))
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.GraphicEq, null, tint = Green)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("Плеер SoundCloud", color = Color.White, fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f))
+                                    IconButton(onClick = {
+                                        soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
+                                    }) {
+                                        Icon(if (soundCloudPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            "Воспроизведение", tint = Green, modifier = Modifier.size(30.dp))
+                                    }
+                                }
+                            }
                             if (!soundCloudEmbed) {
                                 if (soundCloudResults.isEmpty()) {
                                     Column(
