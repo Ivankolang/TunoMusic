@@ -16,7 +16,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -95,7 +94,7 @@ private fun savePlaylists(context: Context, playlists: List<Playlist>) {
     val array = JSONArray()
     playlists.forEach { playlist ->
         val ids = JSONArray()
-        playlist.trackIds.forEach(ids::put)
+        playlist.trackIds.forEach { trackId -> ids.put(trackId) }
         array.put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("trackIds", ids))
     }
     context.getSharedPreferences("tuno_playlists", Context.MODE_PRIVATE).edit()
@@ -256,7 +255,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     (fadeOut(tween(230)) +
                         slideOutVertically(tween(260, easing = FastOutSlowInEasing)) { it / 14 } +
                         scaleOut(targetScale = 0.975f, animationSpec = tween(240)))
-            }.using(SizeTransform(clip = false))
+            }
         },
         label = "player_open_close"
     ) { showFullPlayer ->
