@@ -230,7 +230,9 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
                   if(window.TunoWidget)window.TunoWidget.onPlayback(false);
                 });
                 widget.bind(SC.Widget.Events.PLAY_PROGRESS,function(data){
-                  if(window.TunoWidget)window.TunoWidget.onProgress(data.currentPosition||0,data.duration||0);
+                  widget.getDuration(function(duration){
+                    if(window.TunoWidget)window.TunoWidget.onProgress(data.currentPosition||0,duration||0);
+                  });
                 });
                 window.tunoSeekTo=function(position){widget.seekTo(position);};
                 window.tunoNext=function(){widget.next();};
@@ -341,6 +343,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var playlistName by remember { mutableStateOf("") }
     var showAddTracks by remember { mutableStateOf(false) }
     var pendingTrackIds by remember { mutableStateOf(emptySet<Long>()) }
+    var pendingCloudUrls by remember { mutableStateOf(emptySet<String>()) }
+    var showCloudPlaylistPicker by remember { mutableStateOf(false) }
     val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
@@ -484,6 +488,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             position = if (soundCloudEmbed) soundCloudPosition / 1000f else position,
             duration = if (soundCloudEmbed) soundCloudDuration / 1000f else duration,
             onBack = { fullPlayer = false },
+            onAddToPlaylist = { showCloudPlaylistPicker = true },
             onPlayPause = {
                 if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
                 else controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() }
@@ -1400,7 +1405,7 @@ private fun FullPlayerScreen(
     cloudTrack: SoundCloudResult? = null, cloudFavorite: Boolean = false,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
-    onFavorite: () -> Unit
+    onFavorite: () -> Unit, onAddToPlaylist: () -> Unit = {}
 ) {
     val displayTitle = cloudTrack?.title ?: track?.customTitle ?: "Выбери трек"
     val displayArtist = cloudTrack?.artist ?: track?.originalArtist ?: "Неизвестный исполнитель"
@@ -1426,7 +1431,8 @@ private fun FullPlayerScreen(
             Spacer(Modifier.weight(1f))
             Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
-            if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
+            if (cloudTrack != null) IconButton(onClick = onAddToPlaylist) { Icon(Icons.Default.PlaylistAdd, "Добавить в плейлист", tint = Green) }
+            else IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().weight(0.9f).clickable(enabled = cloudTrack == null, onClick = onCover), contentAlignment = Alignment.Center) {
