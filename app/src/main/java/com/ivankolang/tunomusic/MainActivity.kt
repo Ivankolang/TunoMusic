@@ -268,8 +268,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
     }
-    LaunchedEffect(serviceUrl) {
-        if (serviceUrl.isNotBlank() && !soundCloudEmbed) {
+    LaunchedEffect(serviceUrl, soundCloudResults) {
+        if (serviceUrl.isNotBlank() && !soundCloudEmbed && soundCloudResults.isEmpty()) {
             soundCloudLoadFailed = false
             delay(18000)
             if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
@@ -508,7 +508,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     .clip(RoundedCornerShape(20.dp))
                                     .background(Night)
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
-                                    .alpha(if (soundCloudEmbed) 1f else 0f),
+                                    .alpha(if (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
                                 factory = { ctx ->
                                     WebView(ctx).apply {
                                         tag = serviceUrl
@@ -624,14 +624,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             )
                             if (!soundCloudEmbed) {
                                 if (soundCloudResults.isEmpty()) {
-                                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center) {
+                                    Column(
+                                        Modifier.fillMaxWidth()
+                                            .then(if (soundCloudLoadFailed) Modifier.align(Alignment.TopCenter).background(Night.copy(alpha = 0.94f)).padding(12.dp) else Modifier.fillMaxHeight()),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = if (soundCloudLoadFailed) Arrangement.Center else Arrangement.Center
+                                    ) {
                                         if (soundCloudLoadFailed) {
-                                            Icon(Icons.Default.CloudOff, null, tint = Muted, modifier = Modifier.size(34.dp))
-                                            Spacer(Modifier.height(10.dp))
-                                            Text("SoundCloud не ответил", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                                            Text("Попробуй ещё раз или проверь интернет", color = Muted, fontSize = 12.sp)
-                                            Spacer(Modifier.height(10.dp))
+                                            Icon(Icons.Default.CloudOff, null, tint = Muted, modifier = Modifier.size(30.dp))
+                                            Spacer(Modifier.height(6.dp))
+                                            Text("Не удалось извлечь список треков", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("Открыл страницу SoundCloud ниже — попробуй выбрать трек там", color = Muted, fontSize = 11.sp)
+                                            Spacer(Modifier.height(6.dp))
                                             Button(onClick = {
                                                 val q = URLEncoder.encode(query.trim(), "UTF-8")
                                                 soundCloudResults = emptyList()
