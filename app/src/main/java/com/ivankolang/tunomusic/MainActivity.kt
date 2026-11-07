@@ -1081,18 +1081,17 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                                 cloudMenu = false
                                                             }
                                                         )
-                                                        if (playlists.isEmpty()) {
-                                                            DropdownMenuItem(text = { Text("Создать плейлист") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) },
-                                                                onClick = { cloudMenu = false; tab = 3; playlistName = ""; showCreatePlaylist = true })
-                                                        } else playlists.forEach { playlist ->
-                                                            DropdownMenuItem(text = { Text("В «${playlist.name}»") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) },
-                                                                onClick = {
-                                                                    val updated = playlist.copy(soundCloudTracks = (playlist.soundCloudTracks + result).distinctBy { it.url })
-                                                                    playlists = playlists.map { if (it.id == updated.id) updated else it }
-                                                                    savePlaylists(context, playlists)
-                                                                    cloudMenu = false
-                                                                })
-                                                        }
+                                                         playlists.forEach { playlist ->
+                                                             DropdownMenuItem(text = { Text("В «${playlist.name}»") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) },
+                                                                 onClick = {
+                                                                     val updated = playlist.copy(soundCloudTracks = (playlist.soundCloudTracks + result).distinctBy { it.url })
+                                                                     playlists = playlists.map { if (it.id == updated.id) updated else it }
+                                                                     savePlaylists(context, playlists)
+                                                                     cloudMenu = false
+                                                                 })
+                                                         }
+                                                         DropdownMenuItem(text = { Text("Создать плейлист") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) },
+                                                             onClick = { cloudMenu = false; tab = 3; playlistName = ""; showCreatePlaylist = true })
                                                     }
                                                 }
                                             }
@@ -1160,7 +1159,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${activePlaylist.trackIds.size + activePlaylist.soundCloudTracks.size} треков", color = Muted, fontSize = 12.sp)
                             }
-                            IconButton(onClick = { pendingTrackIds = emptySet(); showAddTracks = true }) {
+                            IconButton(onClick = { pendingTrackIds = emptySet(); pendingCloudUrls = emptySet(); showAddTracks = true }) {
                                 Icon(Icons.Default.Add, null, tint = Green)
                             }
                         }
@@ -1171,7 +1170,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(48.dp))
                                 Text("Здесь пока пусто", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Text("Добавь треки из медиатеки", color = Muted, fontSize = 12.sp)
-                                Button(onClick = { pendingTrackIds = emptySet(); showAddTracks = true }) {
+                                Button(onClick = { pendingTrackIds = emptySet(); pendingCloudUrls = emptySet(); showAddTracks = true }) {
                                     Icon(Icons.Default.Add, null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Добавить треки")
