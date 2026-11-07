@@ -1172,6 +1172,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                             val cloudIsFavorite = cloudFavorites.any { it.url == result.url }
                                             Row(
                                                 Modifier.fillMaxWidth().clickable {
+                                                    playbackQueue = emptyList()
                                                     playCloudQueueItem(listOf(result), 0)
                                                 }.padding(horizontal = 14.dp, vertical = 10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
