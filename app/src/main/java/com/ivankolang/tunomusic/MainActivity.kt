@@ -420,7 +420,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         Spacer(Modifier.width(12.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(cloud.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("SoundCloud · \${cloud.artist}", color = Muted, fontSize = 12.sp)
+                                            Text("SoundCloud · ${cloud.artist}", color = Muted, fontSize = 12.sp)
                                         }
                                         IconButton(onClick = { cloudFavorites = cloudFavorites.filterNot { it.url == cloud.url }; saveCloudFavorites(context, cloudFavorites) }) {
                                             Icon(Icons.Default.Favorite, null, tint = Green)
@@ -665,7 +665,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                             DropdownMenuItem(text = { Text("Создать плейлист") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) },
                                                                 onClick = { cloudMenu = false; tab = 3; playlistName = ""; showCreatePlaylist = true })
                                                         } else playlists.forEach { playlist ->
-                                                            DropdownMenuItem(text = { Text("В «\${playlist.name}»") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) },
+                                                            DropdownMenuItem(text = { Text("В «${playlist.name}»") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) },
                                                                 onClick = {
                                                                     val updated = playlist.copy(soundCloudTracks = (playlist.soundCloudTracks + result).distinctBy { it.url })
                                                                     playlists = playlists.map { if (it.id == updated.id) updated else it }
