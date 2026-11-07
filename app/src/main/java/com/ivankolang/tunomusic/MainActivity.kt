@@ -1201,6 +1201,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     Row(Modifier.fillMaxWidth().clickable {
                                         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
                                         tab = 2
+                                        soundCloudTrack = cloud
+                                        soundCloudPosition = 0L
+                                        soundCloudDuration = 0L
                                         soundCloudEmbed = true
                                         serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1424,7 +1427,7 @@ private fun FullPlayerScreen(
             Spacer(Modifier.weight(1f))
             Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
+            if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().weight(0.9f).clickable(onClick = onCover), contentAlignment = Alignment.Center) {
@@ -1436,8 +1439,10 @@ private fun FullPlayerScreen(
                     Icon(Icons.Default.MusicNote, null, tint = Color.White.copy(alpha = 0.24f), modifier = Modifier.size(150.dp).graphicsLayer { rotationZ = if (playing) albumRotation else 0f })
                 }
             }
-            Surface(Modifier.align(Alignment.BottomEnd).padding(12.dp), color = Color.Black.copy(alpha = 0.25f), shape = CircleShape) {
-                Icon(Icons.Default.Edit, "Изменить обложку", tint = Color.White, modifier = Modifier.padding(10.dp).size(18.dp))
+            if (cloudTrack == null) {
+                Surface(Modifier.align(Alignment.BottomEnd).padding(12.dp), color = Color.Black.copy(alpha = 0.25f), shape = CircleShape) {
+                    Icon(Icons.Default.Edit, "Изменить обложку", tint = Color.White, modifier = Modifier.padding(10.dp).size(18.dp))
+                }
             }
         }
         Spacer(Modifier.height(20.dp))
@@ -1445,7 +1450,7 @@ private fun FullPlayerScreen(
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(displayArtist, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.weight(1f), maxLines = 1)
-            Text("Обложка", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.clickable(onClick = onCover).padding(8.dp))
+            if (cloudTrack == null) Text("Обложка", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.clickable(onClick = onCover).padding(8.dp))
         }
         Spacer(Modifier.height(16.dp))
         Slider(value = if (duration > 0) position.coerceIn(0f, duration) else 0f,
