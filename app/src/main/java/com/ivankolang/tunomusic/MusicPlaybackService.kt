@@ -50,10 +50,11 @@ class MusicPlaybackService : MediaSessionService() {
                 updateCloudSession()
                 startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
                 if (intent.action == ACTION_CLOUD_PLAY || intent.action == ACTION_CLOUD_PAUSE) {
-                    sendCloudCommand(intent.action!!)
+                    sendCloudCommand(if (intent?.action == ACTION_CLOUD_PLAY) ACTION_CLOUD_PLAY else ACTION_CLOUD_PAUSE)
                 }
             }
-            ACTION_CLOUD_NEXT, ACTION_CLOUD_PREVIOUS -> sendCloudCommand(intent.action!!)
+            ACTION_CLOUD_NEXT -> sendCloudCommand(ACTION_CLOUD_NEXT)
+            ACTION_CLOUD_PREVIOUS -> sendCloudCommand(ACTION_CLOUD_PREVIOUS)
             ACTION_CLOUD_STOP -> {
                 sendCloudCommand(ACTION_CLOUD_STOP)
                 cloudPlaying = false
