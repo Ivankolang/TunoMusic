@@ -497,31 +497,43 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 if (url.contains("soundcloud.com/search/")) {
                                                     val script = """
                                                         (function() {
+                                                          var timer = null;
                                                           function collect() {
+                                                            timer = null;
                                                             var found = [];
-                                                            var seen = {};
-                                                            document.querySelectorAll('a[href]').forEach(function(a) {
+                                                            var seen = Object.create(null);
+                                                            var cards = document.querySelectorAll('.searchList__item, .soundList__item, [class*="soundList__item"], [class*="searchList__item"]');
+                                                            function readCard(card) {
+                                                              var a = card.querySelector('a[href*="soundcloud.com/"]');
+                                                              if (!a) return;
                                                               var href = a.href || '';
                                                               if (!/^https?:\\/\\/(www\\.)?soundcloud\\.com\\/[^/]+\\/[^/?#]+/.test(href)) return;
                                                               if (/\\/(search|discover|you|stream|charts|popular|stations|sets|tags)\\//.test(href)) return;
-                                                              var card = a.closest('.searchList__item, .soundList__item, [class*=soundList], [class*=searchList], article') || a.parentElement;
-                                                              var titleNode = card && (card.querySelector('.soundTitle__title, [class*=soundTitle], [class*=trackTitle], [class*=title]'));
-                                                              var title = (titleNode && titleNode.innerText || a.getAttribute('aria-label') || a.innerText || '').trim();
-                                                              title = title.replace(/\\s+/g, ' ');
+                                                              var titleNode = card.querySelector('.soundTitle__title, [class*="soundTitle"], [class*="trackTitle"], [class*="title"]');
+                                                              var title = (titleNode && titleNode.innerText || a.getAttribute('aria-label') || a.innerText || '').trim().replace(/\\s+/g, ' ');
                                                               if (!title || title.length < 2 || title.length > 140 || seen[href]) return;
-                                                              var artistNode = card && card.querySelector('.soundTitle__username, [class*=username], [class*=artist]');
-                                                              var img = card && card.querySelector('img');
+                                                              var artistNode = card.querySelector('.soundTitle__username, [class*="username"], [class*="artist"]');
+                                                              var img = card.querySelector('img');
                                                               seen[href] = true;
                                                               found.push({title:title, artist:(artistNode && artistNode.innerText || '').trim(),
                                                                 url:href.split('?')[0], artwork:img ? (img.currentSrc || img.src || '') : ''});
-                                                            });
+                                                            }
+                                                            if (cards.length) {
+                                                              cards.forEach(readCard);
+                                                            } else {
+                                                              var links = document.querySelectorAll('a[href*="soundcloud.com/"]');
+                                                              for (var i = 0; i < Math.min(links.length, 100); i++) readCard(links[i].parentElement || links[i]);
+                                                            }
                                                             if (window.TunoBridge && found.length) window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
                                                           }
-                                                          collect();
-                                                          if (!window.__tunoResultObserver) {
-                                                            window.__tunoResultObserver = new MutationObserver(collect);
-                                                            window.__tunoResultObserver.observe(document.body, {childList:true,subtree:true});
+                                                          function scheduleCollect() {
+                                                            if (timer !== null) return;
+                                                            timer = setTimeout(collect, 300);
                                                           }
+                                                          collect();
+                                                          if (window.__tunoResultObserver) window.__tunoResultObserver.disconnect();
+                                                          window.__tunoResultObserver = new MutationObserver(scheduleCollect);
+                                                          window.__tunoResultObserver.observe(document.body, {childList:true,subtree:true});
                                                         })();
                                                     """.trimIndent()
                                                     view.evaluateJavascript(script, null)
