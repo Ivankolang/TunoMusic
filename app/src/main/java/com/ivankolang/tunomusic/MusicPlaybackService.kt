@@ -125,7 +125,7 @@ class MusicPlaybackService : MediaSessionService() {
         sendBroadcast(Intent(action).setPackage(packageName))
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): androidx.media3.session.MediaSession? = mediaSession
+    override fun onGetSession(controllerInfo: androidx.media3.session.MediaSession.ControllerInfo): androidx.media3.session.MediaSession? = mediaSession
 
     override fun onDestroy() {
         cloudSession?.run { setActive(false); release() }
