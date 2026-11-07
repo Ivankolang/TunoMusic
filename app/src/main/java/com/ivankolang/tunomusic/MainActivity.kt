@@ -223,9 +223,6 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
               function attach(){
                 if(!window.SC||!SC.Widget||!frame)return;
                 var widget=SC.Widget(frame);
-                widget.bind(SC.Widget.Events.READY,function(){
-                  if(window.TunoWidget)window.TunoWidget.onPlayback(false);
-                });
                 widget.bind(SC.Widget.Events.PLAY,function(){
                   if(window.TunoWidget)window.TunoWidget.onPlayback(true);
                 });
@@ -805,6 +802,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         val intent = Intent(context, MusicPlaybackService::class.java).setAction(action)
                                                             .putExtra(MusicPlaybackService.EXTRA_TITLE, cloud.title)
                                                             .putExtra(MusicPlaybackService.EXTRA_ARTIST, cloud.artist)
+                                                            .putExtra(MusicPlaybackService.EXTRA_ARTWORK, cloud.artwork ?: "")
                                                             .putExtra(MusicPlaybackService.EXTRA_DURATION, latestCloudDuration)
                                                             .putExtra(MusicPlaybackService.EXTRA_POSITION, latestCloudPosition)
                                                         if (isPlaying) ContextCompat.startForegroundService(context, intent)
@@ -822,6 +820,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                             .setAction(MusicPlaybackService.ACTION_CLOUD_UPDATE)
                                                             .putExtra(MusicPlaybackService.EXTRA_TITLE, cloud.title)
                                                             .putExtra(MusicPlaybackService.EXTRA_ARTIST, cloud.artist)
+                                                            .putExtra(MusicPlaybackService.EXTRA_ARTWORK, cloud.artwork ?: "")
                                                             .putExtra(MusicPlaybackService.EXTRA_DURATION, total)
                                                             .putExtra(MusicPlaybackService.EXTRA_POSITION, current)
                                                             .putExtra(MusicPlaybackService.EXTRA_PLAYING, true)
