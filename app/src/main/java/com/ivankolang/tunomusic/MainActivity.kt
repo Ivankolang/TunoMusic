@@ -458,7 +458,20 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         onDispose { runCatching { context.unregisterReceiver(receiver) } }
     }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tracks = loadTracks() }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) tracks = loadTracks()
+    }
+    fun openAddTracks() {
+        pendingTrackIds = emptySet()
+        pendingCloudUrls = emptySet()
+        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+            tracks = loadTracks()
+            showAddTracks = true
+        } else {
+            showAddTracks = true
+            permissionLauncher.launch(permission)
+        }
+    }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = coverTarget
         if (uri != null && target != null) {
@@ -851,9 +864,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
                                     .alpha(if (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
                                 factory = { ctx ->
-                                    WebView(ctx).apply {
+                                    (soundCloudWebView ?: WebView(ctx)).apply {
                                         soundCloudWebView = this
-                                        tag = serviceUrl
                                         setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
                                         overScrollMode = android.view.View.OVER_SCROLL_NEVER
                                         isVerticalScrollBarEnabled = false
@@ -1037,11 +1049,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 }
                                             }
                                         }
-                                        if (soundCloudEmbed) {
-                                            loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
-                                                "text/html", "UTF-8", null)
-                                        } else {
-                                            loadUrl(serviceUrl)
+                                        if (tag != serviceUrl) {
+                                            tag = serviceUrl
+                                            if (soundCloudEmbed) {
+                                                loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
+                                                    "text/html", "UTF-8", null)
+                                            } else {
+                                                loadUrl(serviceUrl)
+                                            }
                                         }
                                     }
                                 },
@@ -1227,7 +1242,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${activePlaylist.trackIds.size + activePlaylist.soundCloudTracks.size} треков", color = Muted, fontSize = 12.sp)
                             }
-                            IconButton(onClick = { pendingTrackIds = emptySet(); pendingCloudUrls = emptySet(); showAddTracks = true }) {
+                            IconButton(onClick = { openAddTracks() }) {
                                 Icon(Icons.Default.Add, null, tint = Green)
                             }
                         }
@@ -1238,7 +1253,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(48.dp))
                                 Text("Здесь пока пусто", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Text("Добавь треки из медиатеки", color = Muted, fontSize = 12.sp)
-                                Button(onClick = { pendingTrackIds = emptySet(); pendingCloudUrls = emptySet(); showAddTracks = true }) {
+                                Button(onClick = { openAddTracks() }) {
                                     Icon(Icons.Default.Add, null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Добавить треки")
@@ -1554,8 +1569,7 @@ private fun FullPlayerScreen(
             Spacer(Modifier.weight(1f))
             Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
-            if (cloudTrack != null) IconButton(onClick = onAddToPlaylist) { Icon(Icons.Default.PlaylistAdd, "Добавить в плейлист", tint = Green) }
-            else IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
+            if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().weight(0.9f).clickable(enabled = cloudTrack == null, onClick = onCover), contentAlignment = Alignment.Center) {
@@ -1600,7 +1614,15 @@ private fun FullPlayerScreen(
             IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
         }
-        Spacer(Modifier.height(26.dp))
+        if (cloudTrack != null) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onAddToPlaylist, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Icon(Icons.Default.PlaylistAdd, null, tint = Green)
+                Spacer(Modifier.width(8.dp))
+                Text("Добавить в плейлист", color = Green)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
     }
 }
 
