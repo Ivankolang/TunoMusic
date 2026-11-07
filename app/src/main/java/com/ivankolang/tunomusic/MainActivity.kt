@@ -236,6 +236,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
     var soundCloudResults by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
+    var soundCloudLoadFailed by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
@@ -266,6 +267,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+    }
+    LaunchedEffect(serviceUrl) {
+        if (serviceUrl.isNotBlank() && !soundCloudEmbed) {
+            soundCloudLoadFailed = false
+            delay(18000)
+            if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
+        }
     }
     DisposableEffect(controller, tracks) {
         val player = controller
@@ -474,7 +482,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
                         trailingIcon = { IconButton(onClick = {
                             val q = URLEncoder.encode(query.trim(), "UTF-8")
-                            if (q.isNotBlank()) serviceUrl = "https://soundcloud.com/search/sounds?q=$q"
+                            if (q.isNotBlank()) {
+                                soundCloudResults = emptyList()
+                                soundCloudLoadFailed = false
+                                serviceUrl = "https://soundcloud.com/search/sounds?q=$q"
+                            }
                         }) { Icon(Icons.Default.ArrowForward, null, tint = Green) } },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
@@ -525,7 +537,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                             }
                                                         }
                                                     }
-                                                    if (parsed.isNotEmpty()) soundCloudResults = parsed.distinctBy { it.url }.take(30)
+                                                    if (parsed.isNotEmpty()) {
+                                                        soundCloudResults = (soundCloudResults + parsed).distinctBy { it.url }.take(30)
+                                                        soundCloudLoadFailed = false
+                                                    }
                                                 }
                                             }
                                         }, "TunoBridge")
@@ -552,43 +567,45 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 if (url.contains("soundcloud.com/search/")) {
                                                     val script = """
                                                         (function() {
+                                                          if (window.__tunoObserver) window.__tunoObserver.disconnect();
+                                                          if (window.__tunoPoll) clearInterval(window.__tunoPoll);
+                                                          var seen = window.__tunoSeen || (window.__tunoSeen = Object.create(null));
+                                                          var started = Date.now();
                                                           var timer = null;
                                                           function collect() {
                                                             timer = null;
                                                             var found = [];
-                                                            var seen = Object.create(null);
-                                                            var cards = document.querySelectorAll('.searchList__item, .soundList__item, [class*="soundList__item"], [class*="searchList__item"]');
-                                                            function readCard(card) {
-                                                              var a = card.querySelector('a[href*="soundcloud.com/"]');
-                                                              if (!a) return;
-                                                              var href = a.href || '';
-                                                              if (!/^https?:\\/\\/(www\\.)?soundcloud\\.com\\/[^/]+\\/[^/?#]+/.test(href)) return;
-                                                              if (/\\/(search|discover|you|stream|charts|popular|stations|sets|tags)\\//.test(href)) return;
-                                                              var titleNode = card.querySelector('.soundTitle__title, [class*="soundTitle"], [class*="trackTitle"], [class*="title"]');
-                                                              var title = (titleNode && titleNode.innerText || a.getAttribute('aria-label') || a.innerText || '').trim().replace(/\\s+/g, ' ');
-                                                              if (!title || title.length < 2 || title.length > 140 || seen[href]) return;
-                                                              var artistNode = card.querySelector('.soundTitle__username, [class*="username"], [class*="artist"]');
-                                                              var img = card.querySelector('img');
-                                                              seen[href] = true;
-                                                              found.push({title:title, artist:(artistNode && artistNode.innerText || '').trim(),
-                                                                url:href.split('?')[0], artwork:img ? (img.currentSrc || img.src || '') : ''});
+                                                            var links = document.querySelectorAll('a[href*="soundcloud.com/"]');
+                                                            for (var i = 0; i < links.length; i++) {
+                                                              var a = links[i];
+                                                              var clean = (a.href || "").split("?")[0].split("#")[0];
+                                                              try {
+                                                                var u = new URL(clean);
+                                                                if (!/(^|\\.)soundcloud\\.com$/.test(u.hostname)) continue;
+                                                                var parts = u.pathname.split("/").filter(Boolean);
+                                                                if (parts.length !== 2) continue;
+                                                                if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
+                                                                if (seen[clean]) continue;
+                                                                var card = a.closest("li") || a.closest('[class*="searchList"]') || a.closest('[class*="soundList"]') || a.parentElement || a;
+                                                                var titleNode = card.querySelector('.soundTitle__title, [class*="soundTitle"], [class*="trackTitle"], [data-testid*="title"]');
+                                                                var title = (titleNode && titleNode.innerText || a.getAttribute("aria-label") || a.getAttribute("title") || a.innerText || "").trim().replace(/\\s+/g, " ");
+                                                                if (!title || title.length < 2 || title.length > 160) continue;
+                                                                var artistNode = card.querySelector('.soundTitle__username, [class*="username"], [class*="artist"], [data-testid*="username"]');
+                                                                var img = card.querySelector("img");
+                                                                seen[clean] = true;
+                                                                found.push({title:title, artist:(artistNode && artistNode.innerText || parts[0]).trim(), url:clean, artwork:img ? (img.currentSrc || img.src || "") : ""});
+                                                              } catch(e) {}
                                                             }
-                                                            if (cards.length) {
-                                                              cards.forEach(readCard);
-                                                            } else {
-                                                              var links = document.querySelectorAll('a[href*="soundcloud.com/"]');
-                                                              for (var i = 0; i < Math.min(links.length, 100); i++) readCard(links[i].parentElement || links[i]);
-                                                            }
-                                                            if (window.TunoBridge && found.length) window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
+                                                            if (found.length && window.TunoBridge) window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
                                                           }
-                                                          function scheduleCollect() {
-                                                            if (timer !== null) return;
-                                                            timer = setTimeout(collect, 300);
-                                                          }
+                                                          function scheduleCollect() { if (timer !== null) return; timer = setTimeout(collect, 250); }
                                                           collect();
-                                                          if (window.__tunoResultObserver) window.__tunoResultObserver.disconnect();
-                                                          window.__tunoResultObserver = new MutationObserver(scheduleCollect);
-                                                          window.__tunoResultObserver.observe(document.body, {childList:true,subtree:true});
+                                                          window.__tunoObserver = new MutationObserver(scheduleCollect);
+                                                          if (document.body) window.__tunoObserver.observe(document.body, {childList:true,subtree:true});
+                                                          window.__tunoPoll = setInterval(function() {
+                                                            collect();
+                                                            if (Date.now() - started > 25000) { clearInterval(window.__tunoPoll); window.__tunoObserver.disconnect(); }
+                                                          }, 800);
                                                         })();
                                                     """.trimIndent()
                                                     view.evaluateJavascript(script, null)
@@ -609,10 +626,24 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 if (soundCloudResults.isEmpty()) {
                                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center) {
-                                        CircularProgressIndicator(color = Green, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
-                                        Spacer(Modifier.height(12.dp))
-                                        Text("Загружаем результаты…", color = Muted, fontSize = 13.sp)
-                                        Text("Поиск SoundCloud отображается в списке Tuno", color = Muted, fontSize = 11.sp)
+                                        if (soundCloudLoadFailed) {
+                                            Icon(Icons.Default.CloudOff, null, tint = Muted, modifier = Modifier.size(34.dp))
+                                            Spacer(Modifier.height(10.dp))
+                                            Text("SoundCloud не ответил", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("Попробуй ещё раз или проверь интернет", color = Muted, fontSize = 12.sp)
+                                            Spacer(Modifier.height(10.dp))
+                                            Button(onClick = {
+                                                val q = URLEncoder.encode(query.trim(), "UTF-8")
+                                                soundCloudResults = emptyList()
+                                                soundCloudLoadFailed = false
+                                                serviceUrl = "https://soundcloud.com/search/sounds?q=$q&retry=" + System.currentTimeMillis()
+                                            }) { Text("Повторить поиск") }
+                                        } else {
+                                            CircularProgressIndicator(color = Green, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                                            Spacer(Modifier.height(12.dp))
+                                            Text("Ищем треки…", color = Muted, fontSize = 13.sp)
+                                            Text("Если SoundCloud не ответит за 18 секунд, появится повтор", color = Muted, fontSize = 11.sp)
+                                        }
                                     }
                                 } else {
                                     LazyColumn(
