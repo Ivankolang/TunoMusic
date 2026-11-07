@@ -46,6 +46,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -364,33 +366,56 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     }
                 } else if (tab == 2) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Color(0xFF111915), RoundedCornerShape(18.dp))
+                            .border(1.dp, Color(0xFF26352C), RoundedCornerShape(18.dp))
+                            .padding(horizontal = 13.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (soundCloudEmbed) {
                             IconButton(onClick = {
                                 soundCloudEmbed = false
                                 serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8")
-                            }) { Icon(Icons.Default.ArrowBack, null, tint = Color.White) }
+                            }, modifier = Modifier.size(38.dp)) {
+                                Icon(Icons.Default.ArrowBack, null, tint = Color.White)
+                            }
                         } else {
-                            Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                            Box(
+                                Modifier.size(38.dp).background(Color(0xFF20372A), RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                            }
                         }
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (soundCloudEmbed) "Сейчас играет" else "SoundCloud",
-                            color = Green, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Spacer(Modifier.weight(1f))
-                        Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск", color = Muted, fontSize = 11.sp)
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("SOUNDCLOUD", color = Muted, fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+                            Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск музыки",
+                                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+                        Surface(color = Color(0xFF20372A), shape = RoundedCornerShape(50)) {
+                            Text("TUNO", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp, modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp))
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
                         placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
                         trailingIcon = { IconButton(onClick = {
                             val q = URLEncoder.encode(query.trim(), "UTF-8")
                             if (q.isNotBlank()) serviceUrl = "https://soundcloud.com/search/sounds?q=$q"
                         }) { Icon(Icons.Default.ArrowForward, null, tint = Green) } },
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green)
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
+                            focusedContainerColor = Color(0xFF111915), unfocusedContainerColor = Color(0xFF111915),
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green
+                        )
                     )
                     Spacer(Modifier.height(12.dp))
                     if (serviceUrl.isBlank()) {
@@ -401,7 +426,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     } else {
                         AndroidView(
-                            modifier = Modifier.fillMaxSize().background(Night, RoundedCornerShape(18.dp)),
+                            modifier = Modifier.fillMaxSize()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Night)
+                                .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp)),
                             factory = { ctx ->
                                 WebView(ctx).apply {
                                     tag = serviceUrl
