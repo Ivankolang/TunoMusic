@@ -66,8 +66,8 @@ class MusicPlaybackService : MediaSessionService() {
                     (intent.action == ACTION_CLOUD_UPDATE && intent.getBooleanExtra(EXTRA_PLAYING, cloudPlaying))
                 updateCloudSession()
                 startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
-                if (intent.action == ACTION_CLOUD_PLAY || intent.action == ACTION_CLOUD_PAUSE) {
-                    sendCloudCommand(if (intent?.action == ACTION_CLOUD_PLAY) ACTION_CLOUD_PLAY else ACTION_CLOUD_PAUSE)
+                if (intent.getBooleanExtra(EXTRA_FROM_SYSTEM, false)) {
+                    sendCloudCommand(if (intent.action == ACTION_CLOUD_PLAY) ACTION_CLOUD_PLAY else ACTION_CLOUD_PAUSE)
                 }
             }
             ACTION_CLOUD_NEXT -> sendCloudCommand(ACTION_CLOUD_NEXT)
@@ -112,7 +112,8 @@ class MusicPlaybackService : MediaSessionService() {
         val action = if (cloudPlaying) ACTION_CLOUD_PAUSE else ACTION_CLOUD_PLAY
         val icon = if (cloudPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         val actionIntent = PendingIntent.getService(
-            this, 71, Intent(this, MusicPlaybackService::class.java).setAction(action),
+            this, 71, Intent(this, MusicPlaybackService::class.java).setAction(action)
+                .putExtra(EXTRA_FROM_SYSTEM, true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val openIntent = PendingIntent.getActivity(
@@ -176,6 +177,7 @@ class MusicPlaybackService : MediaSessionService() {
         const val EXTRA_DURATION = "cloud_duration"
         const val EXTRA_POSITION = "cloud_position"
         const val EXTRA_PLAYING = "cloud_playing"
+        const val EXTRA_FROM_SYSTEM = "cloud_from_system"
         private const val CLOUD_CHANNEL_ID = "tuno_soundcloud_playback"
         private const val CLOUD_NOTIFICATION_ID = 74
     }
