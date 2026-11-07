@@ -779,7 +779,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                           var seen = window.__tunoSeen || (window.__tunoSeen = Object.create(null));
                                                           var timer = null;
                                                           function textOf(node) {
-                                                            return node ? (node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim() : "";
+                                                            return node ? (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim() : "";
                                                           }
                                                           function titleFrom(anchor, parts) {
                                                             var selectors = [
@@ -803,9 +803,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                               }
                                                             }
                                                             var direct = textOf(anchor) || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "";
-                                                            direct = direct.replace(/^play\\s+/i, "").trim();
+                                                            direct = direct.replace(/^play\s+/i, "").trim();
                                                             if (direct.length >= 2 && direct.length <= 160) return direct;
-                                                            return decodeURIComponent(parts[1]).replace(/[-_]+/g, " ").replace(/\\s+/g, " ").trim();
+                                                            return decodeURIComponent(parts[1]).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
                                                           }
                                                           function collect() {
                                                             timer = null;
