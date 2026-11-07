@@ -379,7 +379,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     LaunchedEffect(serviceUrl, soundCloudResults) {
         if (serviceUrl.isNotBlank() && !soundCloudEmbed && soundCloudResults.isEmpty()) {
             soundCloudLoadFailed = false
-            delay(18000)
+            delay(35000)
             if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
         }
     }
@@ -771,51 +771,95 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 
                                             override fun onPageFinished(view: WebView, url: String) {
                                                 super.onPageFinished(view, url)
-                                                if (url.contains("soundcloud.com/search/")) {
+                                                if (url.contains("soundcloud.com/search")) {
                                                     val script = """
                                                         (function() {
                                                           if (window.__tunoObserver) window.__tunoObserver.disconnect();
                                                           if (window.__tunoPoll) clearInterval(window.__tunoPoll);
                                                           var seen = window.__tunoSeen || (window.__tunoSeen = Object.create(null));
-                                                          var started = Date.now();
                                                           var timer = null;
+                                                          function textOf(node) {
+                                                            return node ? (node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim() : "";
+                                                          }
+                                                          function titleFrom(anchor, parts) {
+                                                            var selectors = [
+                                                              '[data-testid*="title"]',
+                                                              '.soundTitle__title',
+                                                              '[class*="soundTitle__title"]',
+                                                              '[class*="trackTitle"]',
+                                                              '[class*="title"]'
+                                                            ];
+                                                            var nodes = [anchor, anchor.parentElement,
+                                                              anchor.closest('[class*="soundList__item"]'),
+                                                              anchor.closest('[class*="searchList"]'),
+                                                              anchor.closest('li')];
+                                                            for (var n = 0; n < nodes.length; n++) {
+                                                              var card = nodes[n];
+                                                              if (!card) continue;
+                                                              for (var j = 0; j < selectors.length; j++) {
+                                                                var titleNode = card.querySelector(selectors[j]);
+                                                                var candidate = textOf(titleNode);
+                                                                if (candidate && candidate.length >= 2 && candidate.length <= 160) return candidate;
+                                                              }
+                                                            }
+                                                            var direct = textOf(anchor) || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "";
+                                                            direct = direct.replace(/^play\\s+/i, "").trim();
+                                                            if (direct.length >= 2 && direct.length <= 160) return direct;
+                                                            return decodeURIComponent(parts[1]).replace(/[-_]+/g, " ").replace(/\\s+/g, " ").trim();
+                                                          }
                                                           function collect() {
                                                             timer = null;
                                                             var found = [];
-                                                            var links = document.querySelectorAll('a[href*="soundcloud.com/"]');
+                                                            var links = document.querySelectorAll('a[href*="soundcloud.com/"], a[href^="/"]');
                                                             for (var i = 0; i < links.length; i++) {
                                                               var a = links[i];
-                                                              var clean = (a.href || "").split("?")[0].split("#")[0];
                                                               try {
-                                                                var u = new URL(clean);
-                                                                if (u.hostname !== "soundcloud.com" && u.hostname !== "www.soundcloud.com" && u.hostname !== "m.soundcloud.com") continue;
+                                                                var u = new URL(a.href, location.href);
+                                                                var host = u.hostname.toLowerCase();
+                                                                if (host !== "soundcloud.com" && host !== "www.soundcloud.com" && host !== "m.soundcloud.com") continue;
                                                                 var parts = u.pathname.split("/").filter(Boolean);
                                                                 if (parts.length !== 2) continue;
                                                                 if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
+                                                                var clean = "https://soundcloud.com/" + parts[0] + "/" + parts[1];
                                                                 if (seen[clean]) continue;
-                                                                var card = a.closest("li") || a.closest('[class*="searchList"]') || a.closest('[class*="soundList"]') || a.parentElement || a;
-                                                                var titleNode = card.querySelector('.soundTitle__title, [class*="soundTitle"], [class*="trackTitle"], [data-testid*="title"]');
-                                                                var title = (titleNode && titleNode.innerText || a.getAttribute("aria-label") || a.getAttribute("title") || a.innerText || "").trim();
+                                                                var title = titleFrom(a, parts);
                                                                 if (!title || title.length < 2 || title.length > 160) continue;
-                                                                var artistNode = card.querySelector('.soundTitle__username, [class*="username"], [class*="artist"], [data-testid*="username"]');
-                                                                var img = card.querySelector("img");
+                                                                var card = a.closest('[class*="soundList__item"]') ||
+                                                                  a.closest('[class*="searchList"]') || a.closest('li') || a.parentElement || a;
+                                                                var artistNode = card && card.querySelector('.soundTitle__username, [class*="username"], [data-testid*="username"]');
+                                                                var img = card && card.querySelector("img");
+                                                                var artist = textOf(artistNode) || decodeURIComponent(parts[0]).replace(/[-_]+/g, " ");
                                                                 seen[clean] = true;
-                                                                found.push({title:title, artist:(artistNode && artistNode.innerText || parts[0]).trim(), url:clean, artwork:img ? (img.currentSrc || img.src || "") : ""});
+                                                                found.push({title:title, artist:artist, url:clean,
+                                                                  artwork:img ? (img.currentSrc || img.src || "") : ""});
                                                               } catch(e) {}
                                                             }
-                                                            if (found.length && window.TunoBridge) window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
+                                                            if (found.length && window.TunoBridge) {
+                                                              window.TunoBridge.onResults(JSON.stringify(found.slice(0,30)));
+                                                            }
                                                           }
-                                                          function scheduleCollect() { if (timer !== null) return; timer = setTimeout(collect, 250); }
+                                                          function scheduleCollect() {
+                                                            if (timer !== null) return;
+                                                            timer = setTimeout(collect, 300);
+                                                          }
                                                           collect();
                                                           window.__tunoObserver = new MutationObserver(scheduleCollect);
                                                           if (document.body) window.__tunoObserver.observe(document.body, {childList:true,subtree:true});
                                                           window.__tunoPoll = setInterval(function() {
                                                             collect();
-                                                            if (Date.now() - started > 25000) { clearInterval(window.__tunoPoll); window.__tunoObserver.disconnect(); }
-                                                          }, 800);
+                                                            if (Date.now() - window.__tunoStartedAt > 45000) {
+                                                              clearInterval(window.__tunoPoll);
+                                                              if (window.__tunoObserver) window.__tunoObserver.disconnect();
+                                                            }
+                                                          }, 700);
+                                                          window.__tunoStartedAt = Date.now();
                                                         })();
                                                     """.trimIndent()
                                                     view.evaluateJavascript(script, null)
+                                                }
+                                            }
+                                        }
+                                        view.evaluateJavascript(script, null)
                                                 }
                                             }
                                         }
