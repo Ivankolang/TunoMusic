@@ -17,6 +17,7 @@ class MusicPlaybackService : MediaSessionService() {
     private var cloudSession: MediaSession? = null
     private var cloudTitle = "SoundCloud"
     private var cloudArtist = "Tuno Music"
+    private var cloudArtwork = ""
     private var cloudDuration = 0L
     private var cloudPosition = 0L
     private var cloudPlaying = false
@@ -58,6 +59,7 @@ class MusicPlaybackService : MediaSessionService() {
             ACTION_CLOUD_PLAY, ACTION_CLOUD_UPDATE, ACTION_CLOUD_PAUSE -> {
                 cloudTitle = intent.getStringExtra(EXTRA_TITLE) ?: cloudTitle
                 cloudArtist = intent.getStringExtra(EXTRA_ARTIST) ?: cloudArtist
+                cloudArtwork = intent.getStringExtra(EXTRA_ARTWORK) ?: cloudArtwork
                 cloudDuration = intent.getLongExtra(EXTRA_DURATION, cloudDuration)
                 cloudPosition = intent.getLongExtra(EXTRA_POSITION, cloudPosition)
                 cloudPlaying = intent.action == ACTION_CLOUD_PLAY ||
@@ -86,6 +88,8 @@ class MusicPlaybackService : MediaSessionService() {
             MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, cloudTitle)
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, cloudArtist)
+                .putString(MediaMetadata.METADATA_KEY_ART_URI, cloudArtwork)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, cloudArtwork)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, cloudDuration)
                 .build()
         )
@@ -168,6 +172,7 @@ class MusicPlaybackService : MediaSessionService() {
         const val ACTION_CLOUD_PREVIOUS = "com.ivankolang.tunomusic.CLOUD_PREVIOUS"
         const val EXTRA_TITLE = "cloud_title"
         const val EXTRA_ARTIST = "cloud_artist"
+        const val EXTRA_ARTWORK = "cloud_artwork"
         const val EXTRA_DURATION = "cloud_duration"
         const val EXTRA_POSITION = "cloud_position"
         const val EXTRA_PLAYING = "cloud_playing"
