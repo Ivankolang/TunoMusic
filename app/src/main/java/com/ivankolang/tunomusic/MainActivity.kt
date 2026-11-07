@@ -859,10 +859,6 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 }
                                             }
                                         }
-                                        view.evaluateJavascript(script, null)
-                                                }
-                                            }
-                                        }
                                         if (soundCloudEmbed) {
                                             loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
                                                 "text/html", "UTF-8", null)
