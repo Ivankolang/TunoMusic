@@ -1331,6 +1331,47 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         )
     }
 
+    if (showCloudPlaylistPicker && soundCloudTrack != null) {
+        AlertDialog(
+            onDismissRequest = { showCloudPlaylistPicker = false },
+            title = { Text("Добавить в плейлист") },
+            text = {
+                if (playlists.isEmpty()) Text("Плейлистов пока нет. Создай новый, чтобы сохранить этот трек.")
+                else LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(playlists, key = { "cloud-picker-" + it.id }) { playlist ->
+                        val cloud = soundCloudTrack!!
+                        val alreadyAdded = playlist.soundCloudTracks.any { it.url == cloud.url }
+                        Row(Modifier.fillMaxWidth().clickable(enabled = !alreadyAdded) {
+                            val updated = playlist.copy(soundCloudTracks = (playlist.soundCloudTracks + cloud).distinctBy { it.url })
+                            playlists = playlists.map { if (it.id == updated.id) updated else it }
+                            savePlaylists(context, playlists)
+                            showCloudPlaylistPicker = false
+                        }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.QueueMusic, null, tint = Green)
+                            Spacer(Modifier.width(12.dp))
+                            Text(playlist.name, color = Color.White, modifier = Modifier.weight(1f))
+                            if (alreadyAdded) Text("Добавлен", color = Muted, fontSize = 11.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val cloud = soundCloudTrack
+                    if (cloud != null) {
+                        val created = Playlist(UUID.randomUUID().toString(), "SoundCloud", emptyList(), listOf(cloud))
+                        playlists = playlists + created
+                        savePlaylists(context, playlists)
+                        activePlaylistId = created.id
+                        tab = 3
+                    }
+                    showCloudPlaylistPicker = false
+                }) { Text("Создать плейлист с треком") }
+            },
+            dismissButton = { TextButton(onClick = { showCloudPlaylistPicker = false }) { Text("Закрыть") } }
+        )
+    }
+
     if (trackToDelete != null) {
         val target = trackToDelete!!
         AlertDialog(
