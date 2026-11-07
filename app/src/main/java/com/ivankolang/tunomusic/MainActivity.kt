@@ -1303,14 +1303,27 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                     }
+                    item { Text("SOUNDCLOUD", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                    items((cloudFavorites + soundCloudResults + listOfNotNull(soundCloudTrack)).distinctBy { it.url }, key = { "pick-cloud-" + it.url }) { cloud ->
+                        val alreadyAdded = activePlaylist.soundCloudTracks.any { it.url == cloud.url }
+                        val checked = cloud.url in pendingCloudUrls
+                        Row(Modifier.fillMaxWidth().clickable(enabled = !alreadyAdded) { pendingCloudUrls = if (checked) pendingCloudUrls - cloud.url else pendingCloudUrls + cloud.url }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = alreadyAdded || checked, enabled = !alreadyAdded, onCheckedChange = { value -> pendingCloudUrls = if (value) pendingCloudUrls + cloud.url else pendingCloudUrls - cloud.url })
+                            CoverThumb(cloud.artwork, 38)
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f)) { Text(cloud.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("SoundCloud · " + cloud.artist, color = Muted, fontSize = 11.sp) }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val updated = activePlaylist.copy(trackIds = (activePlaylist.trackIds + pendingTrackIds).distinct())
+                    val cloudToAdd = (cloudFavorites + soundCloudResults + listOfNotNull(soundCloudTrack)).distinctBy { it.url }.filter { it.url in pendingCloudUrls }
+                    val updated = activePlaylist.copy(trackIds = (activePlaylist.trackIds + pendingTrackIds).distinct(), soundCloudTracks = (activePlaylist.soundCloudTracks + cloudToAdd).distinctBy { it.url })
                     playlists = playlists.map { if (it.id == updated.id) updated else it }
                     savePlaylists(context, playlists)
                     pendingTrackIds = emptySet()
+                    pendingCloudUrls = emptySet()
                     showAddTracks = false
                 }) { Text("Добавить") }
             },
