@@ -15,6 +15,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -54,12 +63,46 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.UUID
 
 private val Night = Color(0xFF080B0A)
 private val Panel = Color(0xFF151B18)
 private val Green = Color(0xFF9BE7B1)
 private val Muted = Color(0xFF9AA69E)
+
+private fun readPlaylists(context: Context): List<Playlist> {
+    val raw = context.getSharedPreferences("tuno_playlists", Context.MODE_PRIVATE)
+        .getString("items", "[]") ?: "[]"
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                val ids = item.optJSONArray("trackIds") ?: JSONArray()
+                val trackIds = buildList {
+                    for (j in 0 until ids.length()) add(ids.optLong(j))
+                }
+                add(Playlist(item.optString("id"), item.optString("name"), trackIds))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun savePlaylists(context: Context, playlists: List<Playlist>) {
+    val array = JSONArray()
+    playlists.forEach { playlist ->
+        val ids = JSONArray()
+        playlist.trackIds.forEach(ids::put)
+        array.put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("trackIds", ids))
+    }
+    context.getSharedPreferences("tuno_playlists", Context.MODE_PRIVATE).edit()
+        .putString("items", array.toString()).apply()
+}
+
+data class Playlist(val id: String, val name: String, val trackIds: List<Long>)
 
 data class AudioTrack(
     val id: Long,
@@ -132,6 +175,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var editTitle by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
+    var playlists by remember { mutableStateOf(readPlaylists(context)) }
+    var activePlaylistId by remember { mutableStateOf<String?>(null) }
+    var showCreatePlaylist by remember { mutableStateOf(false) }
+    var playlistName by remember { mutableStateOf("") }
+    var showAddTracks by remember { mutableStateOf(false) }
+    var pendingTrackIds by remember { mutableStateOf(emptySet<Long>()) }
+    val activePlaylist = playlists.firstOrNull { it.id == activePlaylistId }
     var serviceUrl by remember { mutableStateOf("") }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
@@ -151,7 +201,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         coverTarget = null
     }
 
-    BackHandler(enabled = fullPlayer) { fullPlayer = false }
+    BackHandler(enabled = fullPlayer || activePlaylistId != null) {
+        if (fullPlayer) fullPlayer = false else activePlaylistId = null
+    }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
     }
@@ -190,7 +242,25 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         }
     }
 
-    if (fullPlayer) {
+    AnimatedContent(
+        targetState = fullPlayer,
+        transitionSpec = {
+            if (targetState) {
+                (fadeIn(tween(260)) +
+                    slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it / 10 } +
+                    scaleIn(initialScale = 0.975f, animationSpec = tween(320, easing = FastOutSlowInEasing))) togetherWith
+                    (fadeOut(tween(150)) + scaleOut(targetScale = 0.985f, animationSpec = tween(150)))
+            } else {
+                (fadeIn(tween(220)) +
+                    slideInVertically(tween(280, easing = FastOutSlowInEasing)) { it / 12 }) togetherWith
+                    (fadeOut(tween(230)) +
+                        slideOutVertically(tween(260, easing = FastOutSlowInEasing)) { it / 14 } +
+                        scaleOut(targetScale = 0.975f, animationSpec = tween(240)))
+            }.using(SizeTransform(clip = false))
+        },
+        label = "player_open_close"
+    ) { showFullPlayer ->
+    if (showFullPlayer) {
         FullPlayerScreen(
             track = selectedTrack, playing = playing, position = position, duration = duration,
             onBack = { fullPlayer = false },
@@ -214,7 +284,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; else -> "Поиск музыки" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Поиск музыки"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
                     }
                     Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
                 }
@@ -265,7 +335,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                     }
-                } else {
+                } else if (tab == 2) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
                         Spacer(Modifier.width(8.dp))
@@ -307,6 +377,108 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             update = { web -> if (web.tag != serviceUrl) { web.tag = serviceUrl; web.loadUrl(serviceUrl) } }
                         )
                     }
+                } else {
+                    if (activePlaylist == null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Твои плейлисты", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                            Spacer(Modifier.weight(1f))
+                            FilledTonalButton(onClick = { playlistName = ""; showCreatePlaylist = true }) {
+                                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("Создать")
+                            }
+                        }
+                        if (playlists.isEmpty()) {
+                            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center) {
+                                Icon(Icons.Default.QueueMusic, null, tint = Green, modifier = Modifier.size(54.dp))
+                                Text("Плейлистов пока нет", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Создай подборку любимых треков", color = Muted, fontSize = 12.sp)
+                                Spacer(Modifier.height(10.dp))
+                                Button(onClick = { playlistName = ""; showCreatePlaylist = true }) {
+                                    Icon(Icons.Default.Add, null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Новый плейлист")
+                                }
+                            }
+                        } else {
+                            LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                                items(playlists, key = { it.id }) { playlist ->
+                                    Row(Modifier.fillMaxWidth().clickable { activePlaylistId = playlist.id }
+                                        .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(54.dp).background(Color(0xFF20372A), RoundedCornerShape(14.dp)),
+                                            contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.QueueMusic, null, tint = Green, modifier = Modifier.size(27.dp))
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(playlist.name, color = Color.White, fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("${playlist.trackIds.size} треков", color = Muted, fontSize = 12.sp)
+                                        }
+                                        IconButton(onClick = {
+                                            playlists = playlists.filterNot { it.id == playlist.id }
+                                            savePlaylists(context, playlists)
+                                        }) { Icon(Icons.Default.DeleteOutline, null, tint = Muted) }
+                                        Icon(Icons.Default.ChevronRight, null, tint = Muted)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { activePlaylistId = null }) {
+                                Icon(Icons.Default.ArrowBack, null, tint = Color.White)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(activePlaylist.name, color = Color.White, fontWeight = FontWeight.Bold,
+                                    fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${activePlaylist.trackIds.size} треков", color = Muted, fontSize = 12.sp)
+                            }
+                            IconButton(onClick = { pendingTrackIds = emptySet(); showAddTracks = true }) {
+                                Icon(Icons.Default.Add, null, tint = Green)
+                            }
+                        }
+                        val playlistTracks = tracks.filter { it.id in activePlaylist.trackIds }
+                        if (playlistTracks.isEmpty()) {
+                            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center) {
+                                Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(48.dp))
+                                Text("Здесь пока пусто", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Добавь треки из медиатеки", color = Muted, fontSize = 12.sp)
+                                Button(onClick = { pendingTrackIds = emptySet(); showAddTracks = true }) {
+                                    Icon(Icons.Default.Add, null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Добавить треки")
+                                }
+                            }
+                        } else {
+                            LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                                items(playlistTracks, key = { it.id }) { track ->
+                                    Row(Modifier.fillMaxWidth().clickable {
+                                        selectedTrack = track
+                                        controllerProvider()?.let { c ->
+                                            c.setMediaItems(playlistTracks.map { toMediaItem(it) }, playlistTracks.indexOf(track), 0L)
+                                            c.prepare(); c.play()
+                                        }
+                                    }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        CoverThumb(track.cover, 46)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(track.customTitle, color = Color.White, maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                                            Text(track.originalArtist, color = Muted, fontSize = 12.sp, maxLines = 1)
+                                        }
+                                        IconButton(onClick = {
+                                            val updated = activePlaylist.copy(trackIds = activePlaylist.trackIds - track.id)
+                                            playlists = playlists.map { if (it.id == updated.id) updated else it }
+                                            savePlaylists(context, playlists)
+                                        }) { Icon(Icons.Default.RemoveCircleOutline, null, tint = Muted) }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -323,10 +495,75 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 },
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
                     icon = { Icon(Icons.Default.Search, null) }, label = { Text("Поиск") })
+                NavigationBarItem(selected = tab == 3, onClick = { tab = 3; activePlaylistId = null },
+                    icon = { Icon(Icons.Default.QueueMusic, null) }, label = { Text("Плейлисты") })
             }
         }
+    }
+    }
+
+    if (showCreatePlaylist) {
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylist = false },
+            title = { Text("Новый плейлист") },
+            text = {
+                OutlinedTextField(value = playlistName, onValueChange = { playlistName = it },
+                    singleLine = true, label = { Text("Название плейлиста") })
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = playlistName.trim()
+                    if (name.isNotEmpty()) {
+                        val created = Playlist(UUID.randomUUID().toString(), name, emptyList())
+                        playlists = playlists + created
+                        savePlaylists(context, playlists)
+                        activePlaylistId = created.id
+                        tab = 3
+                    }
+                    showCreatePlaylist = false
+                }) { Text("Создать") }
+            },
+            dismissButton = { TextButton(onClick = { showCreatePlaylist = false }) { Text("Отмена") } }
+        )
+    }
+
+    if (showAddTracks && activePlaylist != null) {
+        AlertDialog(
+            onDismissRequest = { showAddTracks = false },
+            title = { Text("Добавить треки") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(tracks, key = { it.id }) { track ->
+                        val alreadyAdded = track.id in activePlaylist.trackIds
+                        val checked = track.id in pendingTrackIds
+                        Row(Modifier.fillMaxWidth().clickable(enabled = !alreadyAdded) {
+                            pendingTrackIds = if (checked) pendingTrackIds - track.id else pendingTrackIds + track.id
+                        }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = alreadyAdded || checked, enabled = !alreadyAdded,
+                                onCheckedChange = { value ->
+                                    pendingTrackIds = if (value) pendingTrackIds + track.id else pendingTrackIds - track.id
+                                })
+                            Column(Modifier.weight(1f)) {
+                                Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(track.originalArtist, color = Muted, fontSize = 11.sp, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val updated = activePlaylist.copy(trackIds = (activePlaylist.trackIds + pendingTrackIds).distinct())
+                    playlists = playlists.map { if (it.id == updated.id) updated else it }
+                    savePlaylists(context, playlists)
+                    pendingTrackIds = emptySet()
+                    showAddTracks = false
+                }) { Text("Добавить") }
+            },
+            dismissButton = { TextButton(onClick = { showAddTracks = false }) { Text("Отмена") } }
+        )
     }
 
     if (editingTrack != null) {
