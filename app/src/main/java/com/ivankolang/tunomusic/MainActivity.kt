@@ -198,11 +198,17 @@ private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     fun onResults(json: String) = onResults.invoke(json)
 }
 
-private class SoundCloudWidgetBridge(private val onPlayback: (Boolean) -> Unit, private val onProgress: (Long, Long) -> Unit) {
+private class SoundCloudWidgetBridge(
+    private val onPlayback: (Boolean) -> Unit,
+    private val onProgress: (Long, Long) -> Unit,
+    private val onFinished: () -> Unit
+) {
     @JavascriptInterface
     fun onPlayback(playing: Boolean) = onPlayback.invoke(playing)
     @JavascriptInterface
     fun onProgress(position: Long, duration: Long) = onProgress.invoke(position, duration)
+    @JavascriptInterface
+    fun onFinished() = onFinished.invoke()
 }
 
 private fun soundCloudWidgetHtml(widgetUrl: String): String {
@@ -230,6 +236,9 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
                 });
                 widget.bind(SC.Widget.Events.PLAY,function(){
                   if(window.TunoWidget)window.TunoWidget.onPlayback(true);
+                });
+                widget.bind(SC.Widget.Events.FINISH,function(){
+                  if(window.TunoWidget)window.TunoWidget.onFinished();
                 });
                 widget.bind(SC.Widget.Events.PAUSE,function(){
                   if(window.TunoWidget)window.TunoWidget.onPlayback(false);
@@ -366,6 +375,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
     var soundCloudPosition by remember { mutableLongStateOf(0L) }
     var soundCloudDuration by remember { mutableLongStateOf(0L) }
+    var soundCloudQueue by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
+    var soundCloudQueueIndex by remember { mutableIntStateOf(0) }
     val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
     val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
     val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
@@ -376,6 +387,41 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+
+    fun stopSoundCloudPlayback() {
+        soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
+        soundCloudPlaying = false
+        runCatching {
+            context.startService(Intent(context, MusicPlaybackService::class.java).setAction(MusicPlaybackService.ACTION_CLOUD_STOP))
+        }
+    }
+
+    fun playCloudQueueItem(queue: List<SoundCloudResult>, index: Int) {
+        if (queue.isEmpty() || index !in queue.indices) return
+        controllerProvider()?.let { player ->
+            player.pause()
+            player.clearMediaItems()
+        }
+        soundCloudQueue = queue
+        soundCloudQueueIndex = index
+        val cloud = queue[index]
+        soundCloudTrack = cloud
+        soundCloudPosition = 0L
+        soundCloudDuration = 0L
+        soundCloudPlaying = false
+        soundCloudEmbed = true
+        tab = 2
+        val encoded = URLEncoder.encode(cloud.url, "UTF-8")
+        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+    }
+
+    fun playNextCloudTrack() {
+        if (soundCloudQueueIndex + 1 < soundCloudQueue.size) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex + 1)
+    }
+
+    fun playPreviousCloudTrack() {
+        if (soundCloudQueueIndex > 0) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex - 1)
+    }
 
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
@@ -500,16 +546,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 else controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() }
             },
             onNext = {
-                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoNext && window.tunoNext()", null)
+                if (soundCloudEmbed) playNextCloudTrack()
                 else controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }
             },
             onPrevious = {
-                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoPrevious && window.tunoPrevious()", null)
+                if (soundCloudEmbed) playPreviousCloudTrack()
                 else controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() }
             },
             onSeek = {
-                if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoSeekTo && window.tunoSeekTo(" + (it * 1000).toLong() + ")", null)
-                else controllerProvider()?.seekTo((it * 1000).toLong())
+                if (soundCloudEmbed && soundCloudDuration > 0L) {
+                    val target = (it * 1000).toLong().coerceIn(0L, soundCloudDuration)
+                    soundCloudWebView?.evaluateJavascript("window.tunoSeekTo && window.tunoSeekTo($target)", null)
+                } else if (!soundCloudEmbed) controllerProvider()?.seekTo((it * 1000).toLong())
             },
             onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
             onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } },
@@ -566,9 +614,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         LazyColumn(contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(filtered, key = { it.id }) { track ->
                                 Row(Modifier.fillMaxWidth().clickable {
+                                    stopSoundCloudPlayback()
+                                    soundCloudEmbed = false
                                     selectedTrack = track
+                                    val playQueue = filtered
                                     controllerProvider()?.let { c ->
-                                        c.setMediaItems(tracks.map { toMediaItem(it) }, tracks.indexOf(track), 0L)
+                                        c.setMediaItems(playQueue.map { toMediaItem(it) }, playQueue.indexOf(track).coerceAtLeast(0), 0L)
                                         c.prepare(); c.play()
                                     }
                                 }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -601,13 +652,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             if (tab == 1) {
                                 items(cloudFavorites.filter { it.title.contains(query, true) || it.artist.contains(query, true) }, key = { "cloud-fav-" + it.url }) { cloud ->
                                     Row(Modifier.fillMaxWidth().clickable {
-                                        val encoded = URLEncoder.encode(cloud.url, "UTF-8")
-                                        tab = 2
-                                        soundCloudTrack = cloud
-                                        soundCloudPosition = 0L
-                                        soundCloudDuration = 0L
-                                        soundCloudEmbed = true
-                                        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                        playCloudQueueItem(cloudFavorites, cloudFavorites.indexOfFirst { it.url == cloud.url })
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 48)
                                         Spacer(Modifier.width(12.dp))
@@ -838,7 +883,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         context.startService(intent)
                                                     }
                                                 }
-                                            }
+                                            },
+                                            onFinished = { context.mainExecutor.execute { playNextCloudTrack() } }
                                         ), "TunoWidget")
                                         addJavascriptInterface(SoundCloudBridge { raw ->
                                             context.mainExecutor.execute {
@@ -1169,7 +1215,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Icon(Icons.Default.Add, null, tint = Green)
                             }
                         }
-                        val playlistTracks = tracks.filter { it.id in activePlaylist.trackIds }
+                        val playlistTracks = activePlaylist.trackIds.mapNotNull { id -> tracks.firstOrNull { it.id == id } }
                         if (playlistTracks.isEmpty() && activePlaylist.soundCloudTracks.isEmpty()) {
                             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center) {
@@ -1186,9 +1232,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
                                 items(playlistTracks, key = { it.id }) { track ->
                                     Row(Modifier.fillMaxWidth().clickable {
+                                        stopSoundCloudPlayback()
+                                        soundCloudEmbed = false
                                         selectedTrack = track
                                         controllerProvider()?.let { c ->
-                                            c.setMediaItems(playlistTracks.map { toMediaItem(it) }, playlistTracks.indexOf(track), 0L)
+                                            c.setMediaItems(playlistTracks.map { toMediaItem(it) }, playlistTracks.indexOf(track).coerceAtLeast(0), 0L)
                                             c.prepare(); c.play()
                                         }
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1208,13 +1256,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 }
                                 items(activePlaylist.soundCloudTracks, key = { "playlist-cloud-" + it.url }) { cloud ->
                                     Row(Modifier.fillMaxWidth().clickable {
-                                        val encoded = URLEncoder.encode(cloud.url, "UTF-8")
-                                        tab = 2
-                                        soundCloudTrack = cloud
-                                        soundCloudPosition = 0L
-                                        soundCloudDuration = 0L
-                                        soundCloudEmbed = true
-                                        serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
+                                        playCloudQueueItem(activePlaylist.soundCloudTracks, activePlaylist.soundCloudTracks.indexOfFirst { it.url == cloud.url })
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 46)
                                         Spacer(Modifier.width(12.dp))
