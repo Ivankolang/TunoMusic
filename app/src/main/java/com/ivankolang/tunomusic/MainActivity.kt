@@ -719,6 +719,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         settings.domStorageEnabled = true
                                         settings.mediaPlaybackRequiresUserGesture = false
                                         settings.loadsImagesAutomatically = true
+                                        settings.javaScriptCanOpenWindowsAutomatically = true
+                                        settings.setSupportMultipleWindows(false)
+                                        android.webkit.CookieManager.getInstance().apply {
+                                            setAcceptCookie(true)
+                                            setAcceptThirdPartyCookies(this@apply, true)
+                                        }
+                                        webChromeClient = android.webkit.WebChromeClient()
                                         settings.useWideViewPort = true
                                         settings.loadWithOverviewMode = true
                                         addJavascriptInterface(SoundCloudWidgetBridge { isPlaying ->
