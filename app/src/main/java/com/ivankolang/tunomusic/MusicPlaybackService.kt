@@ -28,11 +28,26 @@ class MusicPlaybackService : MediaSessionService() {
         createCloudNotificationChannel()
         cloudSession = MediaSession(this, "TunoSoundCloud").apply {
             setCallback(object : MediaSession.Callback() {
-                override fun onPlay() = sendCloudCommand(ACTION_CLOUD_PLAY)
-                override fun onPause() = sendCloudCommand(ACTION_CLOUD_PAUSE)
+                override fun onPlay() {
+                    cloudPlaying = true
+                    updateCloudSession()
+                    startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
+                    sendCloudCommand(ACTION_CLOUD_PLAY)
+                }
+                override fun onPause() {
+                    cloudPlaying = false
+                    updateCloudSession()
+                    startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
+                    sendCloudCommand(ACTION_CLOUD_PAUSE)
+                }
                 override fun onSkipToNext() = sendCloudCommand(ACTION_CLOUD_NEXT)
                 override fun onSkipToPrevious() = sendCloudCommand(ACTION_CLOUD_PREVIOUS)
-                override fun onStop() = sendCloudCommand(ACTION_CLOUD_STOP)
+                override fun onStop() {
+                    cloudPlaying = false
+                    updateCloudSession()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    sendCloudCommand(ACTION_CLOUD_STOP)
+                }
             })
             setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
         }
