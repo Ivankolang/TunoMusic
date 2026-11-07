@@ -721,10 +721,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         settings.loadsImagesAutomatically = true
                                         settings.javaScriptCanOpenWindowsAutomatically = true
                                         settings.setSupportMultipleWindows(false)
-                                        android.webkit.CookieManager.getInstance().apply {
-                                            setAcceptCookie(true)
-                                            setAcceptThirdPartyCookies(this@apply, true)
-                                        }
+                                        android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                                        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                         webChromeClient = android.webkit.WebChromeClient()
                                         settings.useWideViewPort = true
                                         settings.loadWithOverviewMode = true
