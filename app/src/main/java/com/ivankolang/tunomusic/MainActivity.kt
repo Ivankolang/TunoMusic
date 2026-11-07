@@ -2,6 +2,9 @@ package com.ivankolang.tunomusic
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -356,11 +359,39 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
     var soundCloudPosition by remember { mutableLongStateOf(0L) }
     var soundCloudDuration by remember { mutableLongStateOf(0L) }
+    val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
+    val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
+    val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
+    val latestCloudPlaying by rememberUpdatedState(soundCloudPlaying)
+    val latestCloudWebView by rememberUpdatedState(soundCloudWebView)
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    MusicPlaybackService.ACTION_CLOUD_PLAY -> latestCloudWebView?.evaluateJavascript("window.tunoPlay && window.tunoPlay()", null)
+                    MusicPlaybackService.ACTION_CLOUD_PAUSE -> latestCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
+                    MusicPlaybackService.ACTION_CLOUD_NEXT -> latestCloudWebView?.evaluateJavascript("window.tunoNext && window.tunoNext()", null)
+                    MusicPlaybackService.ACTION_CLOUD_PREVIOUS -> latestCloudWebView?.evaluateJavascript("window.tunoPrevious && window.tunoPrevious()", null)
+                    MusicPlaybackService.ACTION_CLOUD_STOP -> latestCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(MusicPlaybackService.ACTION_CLOUD_PLAY)
+            addAction(MusicPlaybackService.ACTION_CLOUD_PAUSE)
+            addAction(MusicPlaybackService.ACTION_CLOUD_NEXT)
+            addAction(MusicPlaybackService.ACTION_CLOUD_PREVIOUS)
+            addAction(MusicPlaybackService.ACTION_CLOUD_STOP)
+        }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tracks = loadTracks() }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -765,11 +796,39 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         settings.useWideViewPort = true
                                         settings.loadWithOverviewMode = true
                                         addJavascriptInterface(SoundCloudWidgetBridge(
-                                            onPlayback = { isPlaying -> context.mainExecutor.execute { soundCloudPlaying = isPlaying } },
-                                            onProgress = { current, total -> context.mainExecutor.execute {
-                                                soundCloudPosition = current.coerceAtLeast(0L)
-                                                soundCloudDuration = total.coerceAtLeast(0L)
-                                            } }
+                                            onPlayback = { isPlaying ->
+                                                context.mainExecutor.execute {
+                                                    soundCloudPlaying = isPlaying
+                                                    val cloud = latestCloudTrack
+                                                    if (cloud != null) {
+                                                        val action = if (isPlaying) MusicPlaybackService.ACTION_CLOUD_PLAY else MusicPlaybackService.ACTION_CLOUD_PAUSE
+                                                        val intent = Intent(context, MusicPlaybackService::class.java).setAction(action)
+                                                            .putExtra(MusicPlaybackService.EXTRA_TITLE, cloud.title)
+                                                            .putExtra(MusicPlaybackService.EXTRA_ARTIST, cloud.artist)
+                                                            .putExtra(MusicPlaybackService.EXTRA_DURATION, latestCloudDuration)
+                                                            .putExtra(MusicPlaybackService.EXTRA_POSITION, latestCloudPosition)
+                                                        if (isPlaying) ContextCompat.startForegroundService(context, intent)
+                                                        else context.startService(intent)
+                                                    }
+                                                }
+                                            },
+                                            onProgress = { current, total ->
+                                                context.mainExecutor.execute {
+                                                    soundCloudPosition = current.coerceAtLeast(0L)
+                                                    soundCloudDuration = total.coerceAtLeast(0L)
+                                                    val cloud = latestCloudTrack
+                                                    if (cloud != null && latestCloudPlaying && current / 1000L != (current - 800L).coerceAtLeast(0L) / 1000L) {
+                                                        val intent = Intent(context, MusicPlaybackService::class.java)
+                                                            .setAction(MusicPlaybackService.ACTION_CLOUD_UPDATE)
+                                                            .putExtra(MusicPlaybackService.EXTRA_TITLE, cloud.title)
+                                                            .putExtra(MusicPlaybackService.EXTRA_ARTIST, cloud.artist)
+                                                            .putExtra(MusicPlaybackService.EXTRA_DURATION, total)
+                                                            .putExtra(MusicPlaybackService.EXTRA_POSITION, current)
+                                                            .putExtra(MusicPlaybackService.EXTRA_PLAYING, true)
+                                                        context.startService(intent)
+                                                    }
+                                                }
+                                            }
                                         ), "TunoWidget")
                                         addJavascriptInterface(SoundCloudBridge { raw ->
                                             context.mainExecutor.execute {
