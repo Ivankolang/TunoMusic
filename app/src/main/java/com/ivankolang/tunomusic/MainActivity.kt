@@ -193,6 +193,18 @@ private fun saveCloudFavorites(context: Context, tracks: List<SoundCloudResult>)
     context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).edit().putString("favorites", a.toString()).apply()
 }
 
+private fun updateFavoriteOrder(context: Context, trackId: Long, isFavorite: Boolean) {
+    val prefs = context.getSharedPreferences("track_edits", Context.MODE_PRIVATE)
+    val order = runCatching {
+        val json = JSONArray(prefs.getString("favorite_order", "[]") ?: "[]")
+        buildList { for (i in 0 until json.length()) add(json.optLong(i)) }
+    }.getOrDefault(emptyList())
+    val updated = if (isFavorite) (order.filterNot { it == trackId } + trackId) else order.filterNot { it == trackId }
+    val json = JSONArray()
+    updated.forEach { json.put(it) }
+    prefs.edit().putString("favorite_order", json.toString()).apply()
+}
+
 private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     @JavascriptInterface
     fun onResults(json: String) = onResults.invoke(json)
@@ -570,6 +582,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 } else selectedTrack?.let { track ->
                     val value = !track.isFavorite
                     context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).edit().putBoolean("favorite_${track.id}", value).apply()
+                    updateFavoriteOrder(context, track.id, value)
                     tracks = loadTracks()
                     selectedTrack = tracks.firstOrNull { it.id == track.id }
                 }
@@ -602,7 +615,15 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Spacer(Modifier.weight(1f))
                         Text("${tracks.size} треков", color = Muted, fontSize = 12.sp)
                     }
-                    val filtered = tracks.filter { (tab != 1 || it.isFavorite) && (it.customTitle.contains(query, true) || it.originalArtist.contains(query, true)) }
+                    val filteredBase = tracks.filter { (tab != 1 || it.isFavorite) && (it.customTitle.contains(query, true) || it.originalArtist.contains(query, true)) }
+                    val favoriteOrder = runCatching {
+                        val saved = JSONArray(context.getSharedPreferences("track_edits", Context.MODE_PRIVATE).getString("favorite_order", "[]") ?: "[]")
+                        buildList { for (i in 0 until saved.length()) add(saved.optLong(i)) }
+                    }.getOrDefault(emptyList())
+                    val filtered = if (tab == 1) filteredBase.sortedBy {
+                        val index = favoriteOrder.indexOf(it.id)
+                        if (index < 0) Int.MAX_VALUE else index
+                    } else filteredBase
                     if (tracks.isEmpty() && !(tab == 1 && cloudFavorites.isNotEmpty())) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.LibraryMusic, null, tint = Green, modifier = Modifier.size(52.dp))
