@@ -223,6 +223,11 @@ private fun soundCloudWidgetHtml(widgetUrl: String): String {
               function attach(){
                 if(!window.SC||!SC.Widget||!frame)return;
                 var widget=SC.Widget(frame);
+                widget.bind(SC.Widget.Events.READY,function(){
+                  widget.getDuration(function(duration){
+                    if(window.TunoWidget)window.TunoWidget.onProgress(0,duration||0);
+                  });
+                });
                 widget.bind(SC.Widget.Events.PLAY,function(){
                   if(window.TunoWidget)window.TunoWidget.onPlayback(true);
                 });
