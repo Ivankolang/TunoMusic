@@ -361,6 +361,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var trackToDelete by remember { mutableStateOf<AudioTrack?>(null) }
+    var trackToAddToPlaylist by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
     var service by remember { mutableStateOf("SoundCloud") }
@@ -709,6 +710,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 text = { Text("Переименовать") },
                                                 onClick = { menuExpanded = false; editingTrack = track; editTitle = track.customTitle },
                                                 leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Добавить в плейлист") },
+                                                onClick = { menuExpanded = false; trackToAddToPlaylist = track },
+                                                leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) }
                                             )
                                             DropdownMenuItem(
                                                 text = { Text("Удалить из медиатеки") },
@@ -1349,7 +1355,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     track = selectedTrack!!, playing = playing,
                     onOpen = { fullPlayer = true },
                     onPlayPause = { controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() } },
-                    onNext = { controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } }
+                    onNext = { if (playbackQueue.isNotEmpty()) playNextPlaybackQueueItem() else controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } }
                 )
             }
             NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
@@ -1439,6 +1445,44 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 }) { Text("Добавить") }
             },
             dismissButton = { TextButton(onClick = { showAddTracks = false }) { Text("Отмена") } }
+        )
+    }
+
+    if (trackToAddToPlaylist != null) {
+        val targetTrack = trackToAddToPlaylist!!
+        AlertDialog(
+            onDismissRequest = { trackToAddToPlaylist = null },
+            title = { Text("Добавить в плейлист") },
+            text = {
+                if (playlists.isEmpty()) Text("Плейлистов пока нет. Создай новый с этим треком.")
+                else LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(playlists, key = { "local-picker-" + it.id }) { playlist ->
+                        val alreadyAdded = targetTrack.id in playlist.trackIds
+                        Row(Modifier.fillMaxWidth().clickable(enabled = !alreadyAdded) {
+                            val updated = playlist.copy(trackIds = (playlist.trackIds + targetTrack.id).distinct())
+                            playlists = playlists.map { if (it.id == updated.id) updated else it }
+                            savePlaylists(context, playlists)
+                            trackToAddToPlaylist = null
+                        }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.QueueMusic, null, tint = Green)
+                            Spacer(Modifier.width(12.dp))
+                            Text(playlist.name, color = Color.White, modifier = Modifier.weight(1f))
+                            if (alreadyAdded) Text("Добавлен", color = Muted, fontSize = 11.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val created = Playlist(UUID.randomUUID().toString(), targetTrack.customTitle, listOf(targetTrack.id))
+                    playlists = playlists + created
+                    savePlaylists(context, playlists)
+                    activePlaylistId = created.id
+                    tab = 3
+                    trackToAddToPlaylist = null
+                }) { Text("Создать плейлист с треком") }
+            },
+            dismissButton = { TextButton(onClick = { trackToAddToPlaylist = null }) { Text("Закрыть") } }
         )
     }
 
