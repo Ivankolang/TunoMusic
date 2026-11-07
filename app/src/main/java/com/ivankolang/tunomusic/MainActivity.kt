@@ -290,6 +290,8 @@ data class AudioTrack(
     val isFavorite: Boolean = false
 )
 
+data class PlaybackQueueItem(val local: AudioTrack? = null, val cloud: SoundCloudResult? = null)
+
 class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
@@ -389,6 +391,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudDuration by remember { mutableLongStateOf(0L) }
     var soundCloudQueue by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
     var soundCloudQueueIndex by remember { mutableIntStateOf(0) }
+    var playbackQueue by remember { mutableStateOf(emptyList<PlaybackQueueItem>()) }
+    var playbackQueueIndex by remember { mutableIntStateOf(0) }
     val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
     val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
     val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
@@ -427,12 +431,41 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         serviceUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
     }
 
+    fun playMixedQueueItem(queue: List<PlaybackQueueItem>, index: Int) {
+        if (queue.isEmpty() || index !in queue.indices) return
+        playbackQueue = queue
+        playbackQueueIndex = index
+        val item = queue[index]
+        if (item.local != null) {
+            stopSoundCloudPlayback()
+            soundCloudEmbed = false
+            selectedTrack = item.local
+            soundCloudTrack = null
+            controllerProvider()?.let { player -> player.setMediaItem(toMediaItem(item.local)); player.prepare(); player.play() }
+        } else {
+            val cloud = item.cloud ?: return
+            val cloudQueue = queue.mapNotNull { it.cloud }
+            val cloudIndex = cloudQueue.indexOfFirst { it.url == cloud.url }.coerceAtLeast(0)
+            playCloudQueueItem(cloudQueue, cloudIndex)
+        }
+    }
+
+    fun playNextPlaybackQueueItem() {
+        if (playbackQueueIndex + 1 < playbackQueue.size) playMixedQueueItem(playbackQueue, playbackQueueIndex + 1)
+    }
+
+    fun playPreviousPlaybackQueueItem() {
+        if (playbackQueueIndex > 0) playMixedQueueItem(playbackQueue, playbackQueueIndex - 1)
+    }
+
     fun playNextCloudTrack() {
-        if (soundCloudQueueIndex + 1 < soundCloudQueue.size) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex + 1)
+        if (playbackQueue.isNotEmpty()) playNextPlaybackQueueItem()
+        else if (soundCloudQueueIndex + 1 < soundCloudQueue.size) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex + 1)
     }
 
     fun playPreviousCloudTrack() {
-        if (soundCloudQueueIndex > 0) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex - 1)
+        if (playbackQueue.isNotEmpty()) playPreviousPlaybackQueueItem()
+        else if (soundCloudQueueIndex > 0) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex - 1)
     }
 
     DisposableEffect(context) {
@@ -459,7 +492,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) tracks = loadTracks()
+        if (granted) { tracks = loadTracks(); showAddTracks = true }
     }
     fun openAddTracks() {
         pendingTrackIds = emptySet()
@@ -468,7 +501,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             tracks = loadTracks()
             showAddTracks = true
         } else {
-            showAddTracks = true
+            showAddTracks = false
             permissionLauncher.launch(permission)
         }
     }
@@ -503,13 +536,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
         }
     }
-    DisposableEffect(controller, tracks) {
+    DisposableEffect(controller, tracks, playbackQueue, playbackQueueIndex) {
         val player = controller
         val listener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId?.toLongOrNull()
                 if (id != null) selectedTrack = tracks.firstOrNull { it.id == id }
                 else if (mediaItem == null) selectedTrack = null
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && playbackQueue.isNotEmpty() && playbackQueue.getOrNull(playbackQueueIndex)?.local != null) {
+                    playNextPlaybackQueueItem()
+                }
             }
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
                 val current = player?.currentMediaItem ?: return
@@ -571,11 +609,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 else controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() }
             },
             onNext = {
-                if (soundCloudEmbed) playNextCloudTrack()
+                if (playbackQueue.isNotEmpty()) playNextPlaybackQueueItem()
+                else if (soundCloudEmbed) playNextCloudTrack()
                 else controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }
             },
             onPrevious = {
-                if (soundCloudEmbed) playPreviousCloudTrack()
+                if (playbackQueue.isNotEmpty()) playPreviousPlaybackQueueItem()
+                else if (soundCloudEmbed) playPreviousCloudTrack()
                 else controllerProvider()?.let { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() }
             },
             onSeek = {
@@ -637,6 +677,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         val index = favoriteOrder.indexOf(it.id)
                         if (index < 0) Int.MAX_VALUE else index
                     } else filteredBase
+                    val visibleCloudFavorites = cloudFavorites.filter { it.title.contains(query, true) || it.artist.contains(query, true) }
+                    val currentListQueue = filtered.map { PlaybackQueueItem(local = it) } +
+                        (if (tab == 1) visibleCloudFavorites.map { PlaybackQueueItem(cloud = it) } else emptyList())
                     if (tracks.isEmpty() && !(tab == 1 && cloudFavorites.isNotEmpty())) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.LibraryMusic, null, tint = Green, modifier = Modifier.size(52.dp))
@@ -648,14 +691,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         LazyColumn(contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(filtered, key = { it.id }) { track ->
                                 Row(Modifier.fillMaxWidth().clickable {
-                                    stopSoundCloudPlayback()
-                                    soundCloudEmbed = false
-                                    selectedTrack = track
-                                    val playQueue = filtered
-                                    controllerProvider()?.let { c ->
-                                        c.setMediaItems(playQueue.map { toMediaItem(it) }, playQueue.indexOf(track).coerceAtLeast(0), 0L)
-                                        c.prepare(); c.play()
-                                    }
+                                    playMixedQueueItem(currentListQueue, currentListQueue.indexOfFirst { it.local?.id == track.id }.coerceAtLeast(0))
                                 }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                     CoverThumb(track.cover, 48)
                                     Spacer(Modifier.width(12.dp))
@@ -684,9 +720,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 }
                             }
                             if (tab == 1) {
-                                items(cloudFavorites.filter { it.title.contains(query, true) || it.artist.contains(query, true) }, key = { "cloud-fav-" + it.url }) { cloud ->
+                                items(visibleCloudFavorites, key = { "cloud-fav-" + it.url }) { cloud ->
                                     Row(Modifier.fillMaxWidth().clickable {
-                                        playCloudQueueItem(cloudFavorites, cloudFavorites.indexOfFirst { it.url == cloud.url })
+                                        playMixedQueueItem(currentListQueue, currentListQueue.indexOfFirst { it.cloud?.url == cloud.url })
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 48)
                                         Spacer(Modifier.width(12.dp))
@@ -1247,6 +1283,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                         val playlistTracks = activePlaylist.trackIds.mapNotNull { id -> tracks.firstOrNull { it.id == id } }
+                        val playlistPlaybackQueue = playlistTracks.map { PlaybackQueueItem(local = it) } + activePlaylist.soundCloudTracks.map { PlaybackQueueItem(cloud = it) }
                         if (playlistTracks.isEmpty() && activePlaylist.soundCloudTracks.isEmpty()) {
                             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center) {
@@ -1263,13 +1300,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
                                 items(playlistTracks, key = { it.id }) { track ->
                                     Row(Modifier.fillMaxWidth().clickable {
-                                        stopSoundCloudPlayback()
-                                        soundCloudEmbed = false
-                                        selectedTrack = track
-                                        controllerProvider()?.let { c ->
-                                            c.setMediaItems(playlistTracks.map { toMediaItem(it) }, playlistTracks.indexOf(track).coerceAtLeast(0), 0L)
-                                            c.prepare(); c.play()
-                                        }
+                                        playMixedQueueItem(playlistPlaybackQueue, playlistPlaybackQueue.indexOfFirst { it.local?.id == track.id }.coerceAtLeast(0))
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         CoverThumb(track.cover, 46)
                                         Spacer(Modifier.width(12.dp))
@@ -1287,7 +1318,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 }
                                 items(activePlaylist.soundCloudTracks, key = { "playlist-cloud-" + it.url }) { cloud ->
                                     Row(Modifier.fillMaxWidth().clickable {
-                                        playCloudQueueItem(activePlaylist.soundCloudTracks, activePlaylist.soundCloudTracks.indexOfFirst { it.url == cloud.url })
+                                        playMixedQueueItem(playlistPlaybackQueue, playlistPlaybackQueue.indexOfFirst { it.cloud?.url == cloud.url })
                                     }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (cloud.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null, modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))) else CoverThumb(null, 46)
                                         Spacer(Modifier.width(12.dp))
@@ -1612,15 +1643,9 @@ private fun FullPlayerScreen(
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color(0xFF14291D), modifier = Modifier.size(42.dp))
             }
             IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
-            if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
-        }
-        if (cloudTrack != null) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onAddToPlaylist, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Icon(Icons.Default.PlaylistAdd, null, tint = Green)
-                Spacer(Modifier.width(8.dp))
-                Text("Добавить в плейлист", color = Green)
-            }
+            if (cloudTrack != null) IconButton(onClick = onAddToPlaylist) {
+                Icon(Icons.Default.PlaylistAdd, "Добавить в плейлист", tint = Green, modifier = Modifier.size(28.dp))
+            } else IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
         }
         Spacer(Modifier.height(18.dp))
     }
