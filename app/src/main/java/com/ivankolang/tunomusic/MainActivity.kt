@@ -466,7 +466,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                   }
                                                 })();
                                             """.trimIndent()
-                                            view.evaluateJavascript(script, null)                                            )
+                                            view.evaluateJavascript(script, null)
                                         }
                                     }
                                     loadUrl(serviceUrl)
