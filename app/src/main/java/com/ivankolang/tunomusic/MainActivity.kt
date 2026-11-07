@@ -364,16 +364,68 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     } else {
                         AndroidView(
-                            modifier = Modifier.fillMaxSize().background(Color.White, RoundedCornerShape(16.dp)),
-                            factory = { ctx -> WebView(ctx).apply {
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                settings.mediaPlaybackRequiresUserGesture = false
-                                setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
-                                webViewClient = WebViewClient()
-                                loadUrl(serviceUrl)
-                            } },
-                            update = { web -> if (web.tag != serviceUrl) { web.tag = serviceUrl; web.loadUrl(serviceUrl) } }
+                            modifier = Modifier.fillMaxSize().background(Night, RoundedCornerShape(18.dp)),
+                            factory = { ctx ->
+                                WebView(ctx).apply {
+                                    tag = serviceUrl
+                                    setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
+                                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                                    isVerticalScrollBarEnabled = false
+                                    isHorizontalScrollBarEnabled = false
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    settings.mediaPlaybackRequiresUserGesture = false
+                                    settings.loadsImagesAutomatically = true
+                                    settings.useWideViewPort = true
+                                    settings.loadWithOverviewMode = true
+                                    webViewClient = object : WebViewClient() {
+                                        override fun onPageFinished(view: WebView, url: String) {
+                                            super.onPageFinished(view, url)
+                                            val css = """
+                                                :root { color-scheme: dark !important; --sc-orange: #9BE7B1 !important; }
+                                                html, body, #app, .l-container, .l-content,
+                                                .discover, .search, .searchList, .soundList {
+                                                  background: #080B0A !important; color: #F2F7F3 !important;
+                                                }
+                                                body { font-family: Roboto, Arial, sans-serif !important; }
+                                                a { color: #9BE7B1 !important; }
+                                                button, [role=button], input, textarea { border-radius: 12px !important; }
+                                                input, textarea {
+                                                  background: #151B18 !important; color: #F2F7F3 !important;
+                                                  border: 1px solid #344139 !important;
+                                                }
+                                                .sound, .sound__body, .sound__content, .soundList__item,
+                                                .searchList__item, .listenEngagement, .userInfo {
+                                                  background-color: #111915 !important; color: #F2F7F3 !important;
+                                                  border-color: #26352C !important;
+                                                }
+                                                .soundTitle__title, .soundTitle__username, .sound__title,
+                                                .sound__username, .sc-text, h1, h2, h3, p, span {
+                                                  color: #E8F1EA !important;
+                                                }
+                                                .announcement, .banner, .adBanner, .ad-banner,
+                                                [data-testid*=ad], [class*=cookie], [class*=Cookie] {
+                                                  background: #080B0A !important;
+                                                }
+                                                ::-webkit-scrollbar { width: 4px; }
+                                                ::-webkit-scrollbar-thumb { background: #42634D; border-radius: 8px; }
+                                            """.trimIndent()
+                                            val escaped = css.replace("\\", "\\\\").replace("'", "\\'")
+                                            view.evaluateJavascript(
+                                                "(function(){var id='tuno-soundcloud-theme';var old=document.getElementById(id);if(old)old.remove();var s=document.createElement('style');s.id=id;s.textContent='$escaped';document.head.appendChild(s);document.documentElement.style.background='#080B0A';document.body.style.background='#080B0A';})();",
+                                                null
+                                            )
+                                        }
+                                    }
+                                    loadUrl(serviceUrl)
+                                }
+                            },
+                            update = { web ->
+                                if (web.tag != serviceUrl) {
+                                    web.tag = serviceUrl
+                                    web.loadUrl(serviceUrl)
+                                }
+                            }
                         )
                     }
                 } else {
