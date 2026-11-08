@@ -537,6 +537,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             soundCloudTrack = null
             controllerProvider()?.let { player -> player.setMediaItem(toMediaItem(item.local)); player.prepare(); player.play() }
         } else {
+            if (offlineMode) return
             val cloud = item.cloud ?: return
             val cloudQueue = queue.mapNotNull { it.cloud }
             val cloudIndex = cloudQueue.indexOfFirst { it.url == cloud.url }.coerceAtLeast(0)
@@ -603,7 +604,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 
     fun startCatalogSearch(rawQuery: String) {
         val cleanQuery = rawQuery.trim()
-        if (cleanQuery.isBlank()) return
+        if (cleanQuery.isBlank() || offlineMode) return
         query = cleanQuery
         searchFocused = false
         searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
@@ -650,7 +651,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
-        if (!offlineMode && serviceUrl.isBlank()) {
+    }
+    LaunchedEffect(offlineMode) {
+        if (offlineMode) {
+            stopSoundCloudPlayback()
+            soundCloudEmbed = false
+            serviceUrl = ""
+            soundCloudResults = emptyList()
+        } else if (serviceUrl.isBlank()) {
             catalogMode = false
             val discoveryTerms = listOf("new music", "indie pop", "electronic", "lofi", "alternative rock")
             val term = discoveryTerms[Random.nextInt(discoveryTerms.size)]
@@ -964,7 +972,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             Spacer(Modifier.height(10.dp))
                         }
-                        if (query.isBlank()) {
+                        if (query.isBlank() && offlineMode) {
+                            Text("Офлайн-режим включён. Доступны треки, сохранённые на телефоне; SoundCloud и поиск временно отключены.",
+                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                        if (query.isBlank() && !offlineMode) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Твои Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
