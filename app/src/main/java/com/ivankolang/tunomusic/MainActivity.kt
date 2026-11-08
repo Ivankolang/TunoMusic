@@ -302,6 +302,33 @@ data class AudioTrack(
 
 data class PlaybackQueueItem(val local: AudioTrack? = null, val cloud: SoundCloudResult? = null)
 
+data class RadioStation(
+    val id: String,
+    val name: String,
+    val country: String,
+    val genre: String,
+    val streamUrl: String,
+    val website: String
+)
+
+private val tunoRadioStations = listOf(
+    RadioStation("radius_fm", "Радиус FM", "Беларусь", "Поп · хиты",
+        "https://stream2.datacenter.by/radiusfm_main", "https://radiusfm.by/"),
+    RadioStation("russian_radio_by", "Русское радио Минск", "Беларусь", "Поп",
+        "https://stream.rusradio.by:8443/live128", "https://rusradio.by/"),
+    RadioStation("dushevnoe", "Душевное радио", "Беларусь", "Спокойная музыка",
+        "https://stream2.datacenter.by/dushevnoe", "https://dushevnoe.by/"),
+    RadioStation("alfa_radio", "Альфа Радио", "Беларусь", "Поп · хиты",
+        "https://stream.sb.by/alpha", "https://alpha.by/"),
+    RadioStation("radio_stalica", "Радио Столица", "Беларусь", "Музыка · новости",
+        "https://media2.datacenter.by/stream/stalica/stream", "https://radiostalica.by/"),
+    RadioStation("radio_belarus", "Радио Беларусь", "Беларусь", "Новости · разговорное",
+        "https://media2.datacenter.by/stream/belarusru/stream", "https://radiobelarus.by/"),
+    RadioStation("radio_paradise", "Radio Paradise", "Мир", "Eclectic · rock",
+        "https://stream-uk1.radioparadise.com/mp3-128", "https://radioparadise.com/")
+)
+
+
 class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
@@ -424,6 +451,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var radioMode by rememberSaveable { mutableStateOf(false) }
     var smartDjEnabled by rememberSaveable { mutableStateOf(true) }
     var djFadeRunning by remember { mutableStateOf(false) }
+    var radioSelected by rememberSaveable { mutableStateOf<RadioStation?>(null) }
+    var radioQuery by rememberSaveable { mutableStateOf("") }
+    var radioCountry by rememberSaveable { mutableStateOf("Все") }
+    var radioFavorites by remember {
+        mutableStateOf(context.getSharedPreferences("tuno_radio", Context.MODE_PRIVATE)
+            .getStringSet("favorites", emptySet())?.toSet() ?: emptySet())
+    }
     val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
     val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
     val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
@@ -434,6 +468,28 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+    fun playRadioStation(station: RadioStation) {
+        val player = controllerProvider() ?: return
+        stopSoundCloudPlayback()
+        soundCloudEmbed = false
+        radioMode = false
+        radioPending = false
+        playbackQueue = emptyList()
+        selectedTrack = null
+        radioSelected = station
+        val metadata = MediaMetadata.Builder()
+            .setTitle(station.name)
+            .setArtist("Tuno Radio · " + station.country)
+            .build()
+        val item = MediaItem.Builder()
+            .setMediaId(station.id)
+            .setUri(station.streamUrl)
+            .setMediaMetadata(metadata)
+            .build()
+        player.setMediaItem(item)
+        player.prepare()
+        player.play()
+    }
     val homeMixes = remember(cloudFavorites, soundCloudResults, mixSeed) {
         val favorites = cloudFavorites.distinctBy { it.url }
         val discoveries = soundCloudResults.filterNot { it.isPlaylist }.distinctBy { it.url }
@@ -826,7 +882,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Дом"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Дом"; 4 -> "Радио"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
                     }
                     IconButton(onClick = { offlineMode = !offlineMode }) {
                         Icon(if (offlineMode) Icons.Default.CloudOff else Icons.Default.CloudQueue,
@@ -1528,6 +1584,131 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                     }
+                } else if (tab == 4) {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.weight(1f)) {
+                                Text("TUNO RADIO", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                                Text("Слушай в прямом эфире", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Icon(Icons.Default.Radio, null, tint = Green, modifier = Modifier.size(30.dp))
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = radioQuery,
+                            onValueChange = { radioQuery = it },
+                            modifier = Modifier.fillMaxWidth().height(54.dp),
+                            singleLine = true,
+                            placeholder = { Text("Найти радиостанцию", color = Muted) },
+                            leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
+                                focusedContainerColor = Color(0xFF111915), unfocusedContainerColor = Color(0xFF111915),
+                                focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green
+                            )
+                        )
+                        Spacer(Modifier.height(9.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("Все", "Беларусь", "Мир", "Избранное").forEach { category ->
+                                FilterChip(
+                                    selected = radioCountry == category,
+                                    onClick = { radioCountry = category },
+                                    label = { Text(category, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        if (radioSelected != null) {
+                            val currentRadio = radioSelected!!
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                                    .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
+                                    .border(1.dp, Color(0xFF2C4936), RoundedCornerShape(18.dp))
+                                    .padding(13.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF315C40)),
+                                    contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Radio, null, tint = Green, modifier = Modifier.size(27.dp))
+                                }
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("СЕЙЧАС ИГРАЕТ", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                                    Text(currentRadio.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(currentRadio.country + " · " + currentRadio.genre, color = Muted, fontSize = 10.sp)
+                                }
+                                IconButton(onClick = {
+                                    controllerProvider()?.let { player ->
+                                        if (player.isPlaying || player.playWhenReady) player.pause() else player.play()
+                                    }
+                                }) {
+                                    Icon(if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                                        "Пауза или воспроизведение", tint = Green, modifier = Modifier.size(34.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        val visibleStations = tunoRadioStations.filter { station ->
+                            val matchesCountry = when (radioCountry) {
+                                "Беларусь" -> station.country == "Беларусь"
+                                "Мир" -> station.country != "Беларусь"
+                                "Избранное" -> station.id in radioFavorites
+                                else -> true
+                            }
+                            matchesCountry && (station.name.contains(radioQuery, true) ||
+                                station.genre.contains(radioQuery, true) || station.country.contains(radioQuery, true))
+                        }
+                        if (visibleStations.isEmpty()) {
+                            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center) {
+                                Icon(Icons.Default.Radio, null, tint = Muted, modifier = Modifier.size(42.dp))
+                                Text("Станции не найдены", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Попробуй изменить запрос или фильтр", color = Muted, fontSize = 12.sp)
+                            }
+                        } else {
+                            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 12.dp)) {
+                                items(visibleStations, key = { it.id }) { station ->
+                                    val isCurrent = radioSelected?.id == station.id
+                                    val isFavorite = station.id in radioFavorites
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
+                                            .background(if (isCurrent) Color(0xFF17271D) else Color.Transparent)
+                                            .clickable { playRadioStation(station) }
+                                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp))
+                                            .background(Color(0xFF20372A)), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Radio, null, tint = Green, modifier = Modifier.size(25.dp))
+                                        }
+                                        Spacer(Modifier.width(11.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(station.name, color = Color.White, fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(station.country + " · " + station.genre, color = Muted, fontSize = 11.sp,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                        IconButton(onClick = {
+                                            val updated = if (isFavorite) radioFavorites - station.id else radioFavorites + station.id
+                                            radioFavorites = updated
+                                            context.getSharedPreferences("tuno_radio", Context.MODE_PRIVATE).edit()
+                                                .putStringSet("favorites", updated).apply()
+                                        }) {
+                                            Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                "В избранное", tint = if (isFavorite) Green else Muted)
+                                        }
+                                        IconButton(onClick = { playRadioStation(station) }) {
+                                            Icon(if (isCurrent && playing) Icons.Default.Equalizer else Icons.Default.PlayCircle,
+                                                "Слушать", tint = Green, modifier = Modifier.size(27.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text("Интернет-радио · нужен интернет. Звук идёт через выбранный Android аудиовыход.",
+                            color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+                    }
                 } else {
                     if (activePlaylist == null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1667,6 +1848,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
+                NavigationBarItem(selected = tab == 4, onClick = { tab = 4; activePlaylistId = null },
+                    icon = { Icon(Icons.Default.Radio, null) }, label = { Text("Радио") })
                 NavigationBarItem(selected = tab == 3, onClick = { tab = 3; activePlaylistId = null },
                     icon = { Icon(Icons.Default.QueueMusic, null) }, label = { Text("Плейлисты") })
             }
