@@ -451,7 +451,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var radioMode by rememberSaveable { mutableStateOf(false) }
     var smartDjEnabled by rememberSaveable { mutableStateOf(true) }
     var djFadeRunning by remember { mutableStateOf(false) }
-    var radioSelected by rememberSaveable { mutableStateOf<RadioStation?>(null) }
+    var radioSelectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val radioSelected = tunoRadioStations.firstOrNull { it.id == radioSelectedId }
     var radioQuery by rememberSaveable { mutableStateOf("") }
     var radioCountry by rememberSaveable { mutableStateOf("Все") }
     var radioFavorites by remember {
@@ -476,7 +477,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         radioPending = false
         playbackQueue = emptyList()
         selectedTrack = null
-        radioSelected = station
+        radioSelectedId = station.id
         val metadata = MediaMetadata.Builder()
             .setTitle(station.name)
             .setArtist("Tuno Radio · " + station.country)
