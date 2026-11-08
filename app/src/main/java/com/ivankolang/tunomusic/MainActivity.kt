@@ -510,9 +510,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             .setMediaId(station.id)
             .setUri(station.streamUrl)
             .setMediaMetadata(metadata)
-        // Several Belarusian stations expose extension-less AAC streams.
-        // Set the MIME type explicitly so ExoPlayer does not guess incorrectly.
-        if (station.id == "radius_fm" || station.id == "alfa_radio" || station.id == "radio_stalica") {
+        // Radius FM serves an extension-less AAC+ stream. Let ExoPlayer
+        // inspect its response instead of forcing a MIME hint that may not
+        // match the server's actual AAC+ framing.
+        if (station.id == "alfa_radio" || station.id == "radio_stalica") {
             itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
         }
         val item = itemBuilder.build()
