@@ -149,6 +149,21 @@ private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
 data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?)
+private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
+    val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
+    return runCatching {
+        val a = JSONArray(raw)
+        buildList {
+            for (i in 0 until a.length()) {
+                val t = a.optJSONObject(i) ?: continue
+                val url = t.optString("url")
+                if (url.isNotBlank()) add(SoundCloudResult(t.optString("title"), t.optString("artist"), url,
+                    t.optString("artwork").takeIf { it.startsWith("http") }))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
 private fun saveCloudFavorites(context: Context, tracks: List<SoundCloudResult>) {
     val a = JSONArray()
     tracks.forEach { t -> a.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: "")) }
@@ -558,7 +573,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
         saveSearchHistory(context, searchHistory)
         soundCloudEmbed = false
-        catalogMode = false
+        searchIdle = false
         soundCloudResults = emptyList()
         soundCloudLoadFailed = false
         serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
@@ -584,16 +599,16 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         coverTarget = null
     }
 
-    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && (soundCloudEmbed || !catalogMode))) {
+    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && (soundCloudEmbed || !searchIdle))) {
         when {
             fullPlayer -> fullPlayer = false
             tab == 2 && soundCloudEmbed -> {
                 soundCloudEmbed = false
                 serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8") + "&t=" + System.currentTimeMillis()
             }
-            tab == 2 && !catalogMode -> {
+            tab == 2 && !searchIdle -> {
                 soundCloudEmbed = false
-                catalogMode = true
+                searchIdle = true
                 serviceUrl = ""
                 soundCloudResults = emptyList()
             }
@@ -610,7 +625,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             serviceUrl = ""
             soundCloudResults = emptyList()
         } else if (serviceUrl.isBlank()) {
-            catalogMode = false
+            searchIdle = false
             val discoveryTerms = listOf("new music", "indie pop", "electronic", "lofi", "alternative rock")
             val term = discoveryTerms[Random.nextInt(discoveryTerms.size)]
             serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(term, "UTF-8")
@@ -851,10 +866,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             .padding(horizontal = 13.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (soundCloudEmbed || !catalogMode) {
+                        if (soundCloudEmbed || !searchIdle) {
                             IconButton(onClick = {
                                 soundCloudEmbed = false
-                                catalogMode = true
+                                searchIdle = true
                                 serviceUrl = ""
                                 soundCloudResults = emptyList()
                             }, modifier = Modifier.size(38.dp)) {
@@ -889,7 +904,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = { startCatalogSearch(query) }) {
+                        trailingIcon = { IconButton(onClick = { startSoundCloudSearch(query) }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
                         } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -911,7 +926,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             searchHistory.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.forEach { historyQuery ->
                                 Row(
-                                    Modifier.fillMaxWidth().clickable { startCatalogSearch(historyQuery) }
+                                    Modifier.fillMaxWidth().clickable { startSoundCloudSearch(historyQuery) }
                                         .padding(vertical = 5.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1026,7 +1041,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Spacer(Modifier.height(14.dp))
                         }
                     }
-                    if (catalogMode && !offlineMode) {
+                    if (searchIdle && !offlineMode) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
