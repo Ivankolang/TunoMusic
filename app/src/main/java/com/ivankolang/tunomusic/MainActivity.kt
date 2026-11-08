@@ -2629,6 +2629,48 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
 }
 
+private fun soundCloudDiscoveryScript(): String = """
+    (function() {
+      if (window.__tunoDiscoveryPoll) clearInterval(window.__tunoDiscoveryPoll);
+      var sent = Object.create(null);
+      function cleanText(node) {
+        return node ? (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim() : "";
+      }
+      function collect() {
+        var found = [];
+        var links = document.querySelectorAll('a[href*="soundcloud.com/"], a[href^="/"]');
+        for (var i = 0; i < links.length; i++) {
+          try {
+            var a = links[i];
+            var u = new URL(a.href, location.href);
+            if (u.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") continue;
+            var parts = u.pathname.split("/").filter(Boolean);
+            if (parts.length !== 2) continue;
+            if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
+            var url = "https://soundcloud.com/" + parts[0] + "/" + parts[1];
+            if (sent[url]) continue;
+            var card = a.closest('[class*="soundList__item"]') || a.closest('[class*="searchList"]') ||
+                       a.closest('[data-testid*="track"]') || a.closest("li") || a.parentElement;
+            var titleNode = card && card.querySelector('[data-testid*="title"],.soundTitle__title,[class*="trackTitle"],[class*="soundTitle__title"]');
+            var title = cleanText(titleNode) || cleanText(a).replace(/^play\s+/i, "");
+            if (!title || title.length < 2 || title.length > 160) continue;
+            var artistNode = card && card.querySelector('[class*="username"],[data-testid*="user"],[class*="soundTitle__username"]');
+            var artist = cleanText(artistNode) || parts[0].replace(/[-_]+/g, " ");
+            var img = card && card.querySelector("img");
+            sent[url] = true;
+            found.push({title:title, artist:artist, url:url, artwork:img ? (img.currentSrc || img.src || "") : "", isPlaylist:false});
+          } catch(e) {}
+        }
+        if (found.length && window.TunoDiscovery) window.TunoDiscovery.onResults(JSON.stringify(found.slice(0, 50)));
+      }
+      collect();
+      var observer = new MutationObserver(function(){ collect(); });
+      if (document.body) observer.observe(document.body, {childList:true, subtree:true});
+      window.__tunoDiscoveryPoll = setInterval(collect, 900);
+      setTimeout(function(){ clearInterval(window.__tunoDiscoveryPoll); observer.disconnect(); }, 35000);
+    })();
+""".trimIndent()
+
 @Composable
 private fun HomeDashboard(
     favorites: List<SoundCloudResult>,
@@ -2641,6 +2683,10 @@ private fun HomeDashboard(
     onPlayFavorite: (SoundCloudResult) -> Unit,
     onPlayMix: (List<PlaybackQueueItem>) -> Unit
 ) {
+    val discoveryTerms = listOf("indie pop", "electronic music", "lofi beats", "alternative rock", "dance music", "new music")
+    val discoveryQuery = discoveryTerms[kotlin.math.abs(refreshKey % discoveryTerms.size)]
+    val discoveryUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(discoveryQuery, "UTF-8")
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item {
@@ -2757,6 +2803,53 @@ private fun HomeDashboard(
                 }
             }
         }
+        AndroidView(
+            modifier = Modifier.size(1.dp).alpha(0.01f),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.loadsImagesAutomatically = true
+                    settings.mediaPlaybackRequiresUserGesture = true
+                    addJavascriptInterface(SoundCloudBridge { raw ->
+                        ctx.mainExecutor.execute {
+                            runCatching {
+                                val array = JSONArray(raw)
+                                val parsed = buildList {
+                                    for (index in 0 until array.length()) {
+                                        val item = array.optJSONObject(index) ?: continue
+                                        val url = item.optString("url")
+                                        val title = item.optString("title")
+                                        if (url.startsWith("https://soundcloud.com/") && title.isNotBlank()) {
+                                            add(SoundCloudResult(title, item.optString("artist"), url,
+                                                item.optString("artwork").takeIf { it.startsWith("http") }, false))
+                                        }
+                                    }
+                                }.distinctBy { it.url }.take(50)
+                                if (parsed.isNotEmpty()) onDiscoveryTracks(parsed)
+                            }
+                        }
+                    }, "TunoDiscovery")
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) {
+                            super.onPageFinished(view, url)
+                            if (url.contains("soundcloud.com/search/sounds")) {
+                                view.evaluateJavascript(soundCloudDiscoveryScript(), null)
+                            }
+                        }
+                    }
+                    tag = refreshKey
+                    loadUrl(discoveryUrl)
+                }
+            },
+            update = { view ->
+                if (view.tag != refreshKey) {
+                    view.tag = refreshKey
+                    view.loadUrl(discoveryUrl)
+                }
+            }
+        )
     }
 }
 
