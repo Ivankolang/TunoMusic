@@ -1654,7 +1654,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     .clip(RoundedCornerShape(20.dp))
                                     .background(Night)
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
-                                    .alpha(if (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
+                                    .alpha(if (service == "Sefon.org" || soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
                                 factory = { ctx ->
                                     (soundCloudWebView ?: WebView(ctx)).apply {
                                         soundCloudWebView = this
