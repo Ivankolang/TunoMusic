@@ -56,6 +56,29 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_WIDGET_TOGGLE -> {
+                val source = getSharedPreferences("tuno_widget", MODE_PRIVATE).getString("source", "none")
+                if (source == "cloud") {
+                    cloudPlaying = !cloudPlaying
+                    updateCloudSession()
+                    startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
+                    sendCloudCommand(if (cloudPlaying) ACTION_CLOUD_PLAY else ACTION_CLOUD_PAUSE)
+                } else {
+                    mediaSession?.player?.let { player ->
+                        if (player.isPlaying || player.playWhenReady) player.pause() else player.play()
+                    }
+                }
+            }
+            ACTION_WIDGET_NEXT, ACTION_WIDGET_PREVIOUS -> {
+                val source = getSharedPreferences("tuno_widget", MODE_PRIVATE).getString("source", "none")
+                if (source == "cloud") {
+                    sendCloudCommand(if (intent.action == ACTION_WIDGET_NEXT) ACTION_CLOUD_NEXT else ACTION_CLOUD_PREVIOUS)
+                } else {
+                    mediaSession?.player?.let { player ->
+                        if (intent.action == ACTION_WIDGET_NEXT) player.seekToNextMediaItem() else player.seekToPreviousMediaItem()
+                    }
+                }
+            }
             ACTION_CLOUD_PLAY, ACTION_CLOUD_UPDATE, ACTION_CLOUD_PAUSE -> {
                 cloudTitle = intent.getStringExtra(EXTRA_TITLE) ?: cloudTitle
                 cloudArtist = intent.getStringExtra(EXTRA_ARTIST) ?: cloudArtist
@@ -165,6 +188,9 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     companion object {
+        const val ACTION_WIDGET_TOGGLE = "com.ivankolang.tunomusic.WIDGET_TOGGLE"
+        const val ACTION_WIDGET_NEXT = "com.ivankolang.tunomusic.WIDGET_NEXT"
+        const val ACTION_WIDGET_PREVIOUS = "com.ivankolang.tunomusic.WIDGET_PREVIOUS"
         const val ACTION_CLOUD_PLAY = "com.ivankolang.tunomusic.CLOUD_PLAY"
         const val ACTION_CLOUD_PAUSE = "com.ivankolang.tunomusic.CLOUD_PAUSE"
         const val ACTION_CLOUD_UPDATE = "com.ivankolang.tunomusic.CLOUD_UPDATE"
