@@ -787,6 +787,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
 
     fun startSoundCloudSearch(rawQuery: String) {
+        service = "SoundCloud"
         val cleanQuery = rawQuery.trim()
         if (cleanQuery.isBlank() || offlineMode) return
         query = cleanQuery
