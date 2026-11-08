@@ -666,11 +666,16 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     LaunchedEffect(playlists) {
         savePlaylists(context, playlists)
     }
-    LaunchedEffect(serviceUrl, soundCloudResults) {
-        if (serviceUrl.isNotBlank() && !soundCloudEmbed && soundCloudResults.isEmpty()) {
+    val latestSearchResults by rememberUpdatedState(soundCloudResults)
+    val latestSearchEmbed by rememberUpdatedState(soundCloudEmbed)
+    LaunchedEffect(serviceUrl) {
+        val requestUrl = serviceUrl
+        if (requestUrl.isNotBlank() && !soundCloudEmbed) {
             soundCloudLoadFailed = false
-            delay(35000)
-            if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
+            delay(18000)
+            if (latestSearchResults.isEmpty() && !latestSearchEmbed && serviceUrl == requestUrl) {
+                soundCloudLoadFailed = true
+            }
         }
     }
     LaunchedEffect(soundCloudResults, radioPending) {
