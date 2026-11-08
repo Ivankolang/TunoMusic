@@ -1051,7 +1051,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 Text(track.originalArtist, color = Muted, fontSize = 12.sp)
                                             }
-                                            Icon(Icons.Default.DownloadDone, null, tint = Green)
+                                            Box {
+                                                IconButton(onClick = { trackToDelete = track }) {
+                                                    Icon(Icons.Default.MoreVert, "Действия", tint = Muted)
+                                                }
+                                            }
                                         }
                                     }
                                 }
