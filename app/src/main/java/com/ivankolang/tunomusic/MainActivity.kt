@@ -1196,7 +1196,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Text("Ищи треки по названию или исполнителю", color = Muted, fontSize = 12.sp)
                             }
                         }
-                    } else if (offlineMode) {\n                        // Offline library is rendered above; no network content here.\n                    } else if (serviceUrl.isBlank()) {
+                    } else if (offlineMode) {
+                        // Offline library is rendered above; no network content here.
+                    } else if (serviceUrl.isBlank()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
                             Text("Выбери трек из каталога", color = Color.White, fontWeight = FontWeight.SemiBold)
