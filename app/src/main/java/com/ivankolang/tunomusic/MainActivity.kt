@@ -70,14 +70,10 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.io.File
 import java.io.FileOutputStream
@@ -153,86 +149,6 @@ private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
 data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?)
-data class CatalogRecording(
-    val id: String,
-    val title: String,
-    val artist: String,
-    val releaseId: String?,
-    val artwork: String? = null
-)
-
-private suspend fun searchMusicCatalog(query: String): List<CatalogRecording> = withContext(Dispatchers.IO) {
-    val clean = query.trim().replace(Regex("\\s+"), " ")
-    if (clean.isBlank()) return@withContext emptyList()
-    val escaped = clean.replace("\\", "\\\\").replace("\"", "\\\"")
-    val searchTerms = listOf("recording:\"$escaped\"", clean).distinct()
-    val found = linkedMapOf<String, CatalogRecording>()
-
-    searchTerms.forEachIndexed { index, term ->
-        val encoded = URLEncoder.encode(term, "UTF-8")
-        val connection = (URL("https://musicbrainz.org/ws/2/recording/?query=$encoded&fmt=json&limit=50")
-            .openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10000
-            readTimeout = 15000
-            setRequestProperty("User-Agent", "TunoMusic/0.3 (https://github.com/Ivankolang/TunoMusic)")
-            setRequestProperty("Accept", "application/json")
-        }
-        try {
-            if (connection.responseCode in 200..299) {
-                val body = connection.inputStream.bufferedReader().use { it.readText() }
-                val recordings = JSONObject(body).optJSONArray("recordings") ?: JSONArray()
-                for (i in 0 until recordings.length()) {
-                    val item = recordings.optJSONObject(i) ?: continue
-                    val title = item.optString("title").trim()
-                    if (title.isBlank()) continue
-                    val credits = item.optJSONArray("artist-credit") ?: JSONArray()
-                    val artist = buildString {
-                        for (j in 0 until credits.length()) {
-                            val credit = credits.optJSONObject(j) ?: continue
-                            val name = credit.optJSONObject("artist")?.optString("name").orEmpty()
-                            if (name.isNotBlank()) {
-                                if (isNotEmpty()) append(' ')
-                                append(name)
-                            }
-                            append(credit.optString("joinphrase"))
-                        }
-                    }.trim()
-                    val releases = item.optJSONArray("releases") ?: JSONArray()
-                    val releaseId = releases.optJSONObject(0)?.optString("id")?.takeIf { it.isNotBlank() }
-                    val id = item.optString("id")
-                    if (id.isNotBlank()) {
-                        found.putIfAbsent(id, CatalogRecording(
-                            id, title, artist.ifBlank { "Неизвестный исполнитель" }, releaseId
-                        ))
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // Try the broader query if the exact-phrase search fails.
-        } finally {
-            connection.disconnect()
-        }
-        if (index == 0 && found.size < 8 && searchTerms.size > 1) delay(1100)
-        if (found.size >= 40) return@withContext found.values.toList()
-    }
-    found.values.toList()
-}
-private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
-    val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
-    return runCatching {
-        val a = JSONArray(raw)
-        buildList {
-            for (i in 0 until a.length()) {
-                val t = a.optJSONObject(i) ?: continue
-                val url = t.optString("url")
-                if (url.isNotBlank()) add(SoundCloudResult(t.optString("title"), t.optString("artist"), url,
-                    t.optString("artwork").takeIf { it.startsWith("http") }))
-            }
-        }
-    }.getOrDefault(emptyList())
-}
-
 private fun saveCloudFavorites(context: Context, tracks: List<SoundCloudResult>) {
     val a = JSONArray()
     tracks.forEach { t -> a.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: "")) }
@@ -473,9 +389,6 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
     var soundCloudResults by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
-    var catalogResults by remember { mutableStateOf(emptyList<CatalogRecording>()) }
-    var catalogLoading by remember { mutableStateOf(false) }
-    var catalogError by remember { mutableStateOf(false) }
     var catalogMode by rememberSaveable { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
@@ -645,23 +558,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
         saveSearchHistory(context, searchHistory)
         soundCloudEmbed = false
-        catalogMode = true
-        catalogLoading = true
-        catalogError = false
-        catalogResults = emptyList()
+        catalogMode = false
         soundCloudResults = emptyList()
         soundCloudLoadFailed = false
-        serviceUrl = ""
-        scope.launch {
-            try {
-                catalogResults = searchMusicCatalog(cleanQuery)
-                catalogError = catalogResults.isEmpty()
-            } catch (_: Exception) {
-                catalogError = true
-            } finally {
-                catalogLoading = false
-            }
-        }
+        serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
     }
     val offlineImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         var imported = 0
@@ -684,12 +584,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         coverTarget = null
     }
 
-    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && soundCloudEmbed)) {
+    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && (soundCloudEmbed || !catalogMode))) {
         when {
             fullPlayer -> fullPlayer = false
             tab == 2 && soundCloudEmbed -> {
                 soundCloudEmbed = false
                 serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8")
+            }
+            tab == 2 && !catalogMode -> {
+                soundCloudEmbed = false
+                catalogMode = true
+                serviceUrl = ""
+                soundCloudResults = emptyList()
             }
             else -> activePlaylistId = null
         }
@@ -966,7 +872,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Column(Modifier.weight(1f)) {
                             Text("SOUNDCLOUD", color = Muted, fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
-                            Text(if (soundCloudEmbed) "Плеер Tuno" else if (catalogMode) "Каталог Tuno" else "Источник аудио",
+                            Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск SoundCloud",
                                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                         Surface(color = Color(0xFF20372A), shape = RoundedCornerShape(50)) {
@@ -1121,88 +1027,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     }
                     if (catalogMode && !offlineMode) {
-                        when {
-                            catalogLoading -> Column(
-                                Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                CircularProgressIndicator(color = Green)
-                                Spacer(Modifier.height(12.dp))
-                                Text("Ищем в музыкальном каталоге…", color = Muted)
-                            }
-                            catalogResults.isNotEmpty() -> LazyColumn(
-                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp))
-                                    .background(Night).border(1.dp, Color(0xFF26352C), RoundedCornerShape(18.dp)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                items(catalogResults, key = { it.id }) { result ->
-                                    Row(
-                                        Modifier.fillMaxWidth().clickable {
-                                            val sourceQuery = URLEncoder.encode(
-                                                listOf(result.title, result.artist).filter { it.isNotBlank() }.joinToString(" "),
-                                                "UTF-8"
-                                            )
-                                            query = listOf(result.title, result.artist).filter { it.isNotBlank() }.joinToString(" ")
-                                            soundCloudEmbed = false
-                                            catalogMode = false
-                                            soundCloudResults = emptyList()
-                                            soundCloudLoadFailed = false
-                                            serviceUrl = "https://soundcloud.com/search/sounds?q=$sourceQuery"
-                                        }.padding(horizontal = 14.dp, vertical = 11.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(Panel),
-                                            contentAlignment = Alignment.Center
-                                        ) { Icon(Icons.Default.MusicNote, null, tint = Green) }
-                                        Spacer(Modifier.width(12.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(result.title, color = Color.White, maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                                            Text(result.artist, color = Muted, fontSize = 12.sp,
-                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("MusicBrainz · найти аудио", color = Green, fontSize = 10.sp)
-                                        }
-                                        Icon(Icons.Default.Search, null, tint = Green)
-                                    }
-                                }
-                            }
-                            catalogError -> Column(
-                                Modifier.fillMaxSize().padding(18.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(Icons.Default.CloudOff, null, tint = Muted, modifier = Modifier.size(38.dp))
-                                Text("Каталог не нашёл результаты", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                Text("Можно попробовать поиск аудио напрямую в SoundCloud", color = Muted, fontSize = 12.sp)
-                                Spacer(Modifier.height(12.dp))
-                                Button(onClick = {
-                                    val q = URLEncoder.encode(query.trim(), "UTF-8")
-                                    soundCloudEmbed = false
-                                    catalogMode = false
-                                    soundCloudResults = emptyList()
-                                    soundCloudLoadFailed = false
-                                    serviceUrl = "https://soundcloud.com/search/sounds?q=$q"
-                                }) { Text("Искать в SoundCloud") }
-                            }
-                            else -> Column(
-                                Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
-                                Text("Музыкальный каталог Tuno", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                Text("Ищи треки по названию или исполнителю", color = Muted, fontSize = 12.sp)
-                            }
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
+                            Text("Поиск SoundCloud", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Введи название трека или исполнителя", color = Muted, fontSize = 12.sp)
                         }
                     } else if (offlineMode) {
                         // Offline library is rendered above; no network content here.
                     } else if (serviceUrl.isBlank()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
-                            Text("Выбери трек из каталога", color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text("Tuno подберёт совпадения в SoundCloud", color = Muted, fontSize = 12.sp)
+                            Text("Поиск музыки в SoundCloud", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Введи запрос выше, чтобы найти треки", color = Muted, fontSize = 12.sp)
                         }
                     } else {
                         Box(Modifier.fillMaxSize()) {
@@ -1464,7 +1301,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         } else {
                                             CircularProgressIndicator(color = Green, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
                                             Spacer(Modifier.height(12.dp))
-                                            Text("Ищем треки…", color = Muted, fontSize = 13.sp)
+                                            Text("Ищем прямо в SoundCloud…", color = Muted, fontSize = 13.sp)
                                             Text("Если SoundCloud не ответит за 18 секунд, появится повтор", color = Muted, fontSize = 11.sp)
                                         }
                                     }
