@@ -2831,8 +2831,9 @@ private fun HomeDashboard(
                 }
             }
         }
-        AndroidView(
-            modifier = Modifier.size(1.dp).alpha(0.01f),
+        item {
+            AndroidView(
+                modifier = Modifier.size(1.dp).alpha(0.01f),
             factory = { ctx ->
                 WebView(ctx).apply {
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -2876,8 +2877,9 @@ private fun HomeDashboard(
                     view.tag = refreshKey
                     view.loadUrl(discoveryUrl)
                 }
-            }
-        )
+                }
+            )
+        }
     }
 }
 
