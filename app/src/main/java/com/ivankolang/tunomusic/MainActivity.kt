@@ -67,6 +67,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -453,6 +455,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var djFadeRunning by remember { mutableStateOf(false) }
     var radioSelectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val radioSelected = tunoRadioStations.firstOrNull { it.id == radioSelectedId }
+    var radioError by remember { mutableStateOf<String?>(null) }
     var radioQuery by rememberSaveable { mutableStateOf("") }
     var radioCountry by rememberSaveable { mutableStateOf("Все") }
     var radioFavorites by remember {
@@ -469,6 +472,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+    DisposableEffect(controller) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                radioError = "Не удалось запустить поток: " + (error.localizedMessage ?: error.errorCodeName)
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) radioError = null
+            }
+        }
+        controller?.addListener(listener)
+        onDispose { controller?.removeListener(listener) }
+    }
     fun stopSoundCloudPlayback() {
         soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
         soundCloudPlaying = false
@@ -486,15 +501,21 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         playbackQueue = emptyList()
         selectedTrack = null
         radioSelectedId = station.id
+        radioError = null
         val metadata = MediaMetadata.Builder()
             .setTitle(station.name)
             .setArtist("Tuno Radio · " + station.country)
             .build()
-        val item = MediaItem.Builder()
+        val itemBuilder = MediaItem.Builder()
             .setMediaId(station.id)
             .setUri(station.streamUrl)
             .setMediaMetadata(metadata)
-            .build()
+        // Several Belarusian stations expose extension-less AAC streams.
+        // Set the MIME type explicitly so ExoPlayer does not guess incorrectly.
+        if (station.id == "radius_fm" || station.id == "alfa_radio" || station.id == "radio_stalica") {
+            itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+        }
+        val item = itemBuilder.build()
         player.setMediaItem(item)
         player.prepare()
         player.play()
@@ -1649,6 +1670,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 }
                             }
                             Spacer(Modifier.height(10.dp))
+                        }
+                        if (radioError != null && radioSelected != null) {
+                            Text(
+                                radioError!! + " Проверь интернет или попробуй другую станцию.",
+                                color = Color(0xFFFF9B8F), fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            )
                         }
                         val visibleStations = tunoRadioStations.filter { station ->
                             val matchesCountry = when (radioCountry) {
