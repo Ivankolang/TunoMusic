@@ -661,6 +661,16 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             }
         }
     }
+    val offlineImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        var imported = 0
+        uris.forEach { uri -> if (importOfflineAudio(context, uri)) imported++ }
+        tracks = loadTracks()
+        if (imported > 0) {
+            android.widget.Toast.makeText(context, "Добавлено в офлайн: " + imported, android.widget.Toast.LENGTH_SHORT).show()
+        } else if (uris.isNotEmpty()) {
+            android.widget.Toast.makeText(context, "Не удалось импортировать аудио", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = coverTarget
         if (uri != null && target != null) {
