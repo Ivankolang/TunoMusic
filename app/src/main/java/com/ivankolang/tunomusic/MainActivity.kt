@@ -979,8 +979,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         value = query, onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth().height(52.dp).align(Alignment.CenterHorizontally)
                             .onFocusChanged { searchFocused = it.isFocused }, singleLine = true,
+                        enabled = !offlineMode,
                         shape = RoundedCornerShape(18.dp),
-                        placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
+                        placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
                         trailingIcon = { IconButton(onClick = { startCatalogSearch(query) }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
@@ -1017,7 +1018,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             Spacer(Modifier.height(10.dp))
                         }
-                        if (query.isBlank() && offlineMode) {
+                        if (offlineMode) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                                 Column(Modifier.weight(1f)) {
                                     Text("Офлайн-музыка", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
