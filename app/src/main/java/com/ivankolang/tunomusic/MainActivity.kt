@@ -903,13 +903,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         audiusResults = emptyList()
         soundCloudResults = emptyList()
         sefonPendingQuery = cleanQuery
-        val currentWeb = soundCloudWebView
-        if (currentWeb?.url?.startsWith("https://sefon.org") == true) {
-            val js = "(function(){var q=" + JSONObject.quote(cleanQuery) + ";var a=[].slice.call(document.querySelectorAll('input'));var el=a.find(function(x){return x.type==='search'||/поиск|песня|исполнитель/i.test((x.placeholder||'')+(x.name||''));})||a.find(function(x){return x.type==='text';});if(el){el.value=q;var f=el.form;if(f){if(f.requestSubmit)f.requestSubmit();else f.submit();}else{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}}})();"
-            currentWeb.evaluateJavascript(js, null)
-        } else {
-            serviceUrl = "https://sefon.org/"
-        }
+        serviceUrl = "https://sefon.org/"
     }
 
     fun startAudiusSearch(rawQuery: String) {
@@ -1059,9 +1053,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     val latestSearchResults by rememberUpdatedState(soundCloudResults)
     val latestSearchEmbed by rememberUpdatedState(soundCloudEmbed)
-    LaunchedEffect(serviceUrl) {
+    LaunchedEffect(serviceUrl, service) {
         val requestUrl = serviceUrl
-        if (requestUrl.isNotBlank() && !soundCloudEmbed) {
+        if (service == "SoundCloud" && requestUrl.isNotBlank() && !soundCloudEmbed) {
             soundCloudLoadFailed = false
             delay(18000)
             if (latestSearchResults.isEmpty() && !latestSearchEmbed && serviceUrl == requestUrl) {
@@ -1654,12 +1648,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     } else {
                         Box(Modifier.fillMaxSize()) {
+                            if (service == "Sefon.org") {
+                                SefonWebView(
+                                    query = sefonPendingQuery,
+                                    onQueryConsumed = { sefonPendingQuery = "" }
+                                )
+                            }
                             AndroidView(
                                 modifier = Modifier.fillMaxSize()
                                     .clip(RoundedCornerShape(20.dp))
                                     .background(Night)
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
-                                    .alpha(if (service == "Sefon.org" || soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
+                                    .alpha(if (service != "Sefon.org" && (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed))) 1f else 0f),
                                 factory = { ctx ->
                                     (soundCloudWebView ?: WebView(ctx)).apply {
                                         soundCloudWebView = this
@@ -1902,7 +1902,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 }
                                             }
                                         }
-                                        if (tag != serviceUrl) {
+                                        if (service != "Sefon.org" && tag != serviceUrl) {
                                             tag = serviceUrl
                                             if (soundCloudEmbed) {
                                                 loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
@@ -1914,7 +1914,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     }
                                 },
                                 update = { web ->
-                                    if (web.tag != serviceUrl) {
+                                    if (service != "Sefon.org" && web.tag != serviceUrl) {
                                         web.tag = serviceUrl
                                         if (soundCloudEmbed) {
                                             web.loadDataWithBaseURL("https://w.soundcloud.com/", soundCloudWidgetHtml(serviceUrl),
