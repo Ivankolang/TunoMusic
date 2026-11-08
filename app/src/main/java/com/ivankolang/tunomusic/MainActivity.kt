@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.JavascriptInterface
@@ -78,6 +79,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 import kotlin.random.Random
 
@@ -126,6 +129,26 @@ private fun savePlaylists(context: Context, playlists: List<Playlist>) {
     }
     context.getSharedPreferences("tuno_playlists", Context.MODE_PRIVATE).edit()
         .putString("items", array.toString()).apply()
+}
+
+
+private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
+    return runCatching {
+        val mime = context.contentResolver.getType(uri).orEmpty()
+        val displayName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: "audio_" + System.currentTimeMillis()
+        val safeName = displayName.substringAfterLast('/').replace(Regex("[^A-Za-z0-9А-Яа-я._ -]"), "_")
+        val extByName = safeName.substringAfterLast('.', "").takeIf { it.isNotBlank() && it.length <= 6 }
+        val extension = extByName ?: android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "audio"
+        val baseName = safeName.substringBeforeLast('.', safeName).ifBlank { "Трек" }
+        val folder = File(context.filesDir, "offline_music").apply { mkdirs() }
+        val target = File(folder, baseName.take(60) + "_" + UUID.randomUUID() + "." + extension)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(target).use { output -> input.copyTo(output) }
+        } ?: return false
+        target.length() > 0L
+    }.getOrDefault(false)
 }
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
