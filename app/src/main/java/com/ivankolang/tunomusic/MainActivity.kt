@@ -1016,8 +1016,43 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             Spacer(Modifier.height(10.dp))
                         }
                         if (query.isBlank() && offlineMode) {
-                            Text("Офлайн-режим включён. Доступны треки, сохранённые на телефоне; SoundCloud и поиск временно отключены.",
-                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Офлайн-музыка", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                    Text(tracks.size.toString() + " треков доступны без сети", color = Muted, fontSize = 11.sp)
+                                }
+                                Button(onClick = { offlineImportPicker.launch(arrayOf("audio/*")) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF244B32))) {
+                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Импорт")
+                                }
+                            }
+                            if (tracks.isEmpty()) {
+                                Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.CloudOff, null, tint = Green, modifier = Modifier.size(42.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Пока нет офлайн-музыки", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Text("Импортируй аудиофайлы с телефона", color = Muted, fontSize = 12.sp)
+                                }
+                            } else {
+                                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
+                                    items(tracks, key = { "offline-" + it.id }) { track ->
+                                        Row(Modifier.fillMaxWidth().clickable {
+                                            val queue = tracks.map { PlaybackQueueItem(local = it) }
+                                            playMixedQueueItem(queue, tracks.indexOfFirst { it.id == track.id })
+                                        }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            CoverThumb(track.cover, 48)
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(track.customTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(track.originalArtist, color = Muted, fontSize = 12.sp)
+                                            }
+                                            Icon(Icons.Default.DownloadDone, null, tint = Green)
+                                        }
+                                    }
+                                }
+                            }
                         }
                         if (query.isBlank() && !offlineMode) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1078,7 +1113,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Spacer(Modifier.height(14.dp))
                         }
                     }
-                    if (catalogMode) {
+                    if (catalogMode && !offlineMode) {
                         when {
                             catalogLoading -> Column(
                                 Modifier.fillMaxSize(),
@@ -1154,7 +1189,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 Text("Ищи треки по названию или исполнителю", color = Muted, fontSize = 12.sp)
                             }
                         }
-                    } else if (serviceUrl.isBlank()) {
+                    } else if (offlineMode) {\n                        // Offline library is rendered above; no network content here.\n                    } else if (serviceUrl.isBlank()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
                             Text("Выбери трек из каталога", color = Color.White, fontWeight = FontWeight.SemiBold)
