@@ -383,15 +383,21 @@ private suspend fun searchRadioBrowser(query: String, countryFilter: String): Li
 
 private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withContext(Dispatchers.IO) {
     val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-    val endpoint = URL("https://api.audius.co/v1/tracks/search?query=$encoded&limit=30")
+    // Audius discovery nodes require an app_name identifier and may differ in availability.
+    val endpoint = URL("https://discoveryprovider.audius.co/v1/tracks/search?query=$encoded&limit=30&app_name=TunoMusic")
     val connection = (endpoint.openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
-        connectTimeout = 12000
-        readTimeout = 15000
+        connectTimeout = 15000
+        readTimeout = 20000
         setRequestProperty("User-Agent", "TunoMusic/1.0")
         setRequestProperty("Accept", "application/json")
     }
     try {
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            val details = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            throw IllegalStateException("Audius search HTTP $status: ${details.take(180)}")
+        }
         val root = JSONObject(connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
         val data = root.optJSONArray("data") ?: JSONArray()
         buildList {
@@ -399,18 +405,18 @@ private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withC
                 val item = data.optJSONObject(i) ?: continue
                 val id = item.optString("id")
                 val title = item.optString("title").trim()
-                if (id.isBlank() || title.isBlank()) continue
+                if (id.isBlank() || title.isBlank() || !item.optBoolean("is_streamable", true)) continue
                 val user = item.optJSONObject("user")
                 val art = item.optJSONObject("artwork")
                 val artwork = art?.optString("150x150")?.takeIf { it.startsWith("http") }
                     ?: art?.optString("480x480")?.takeIf { it.startsWith("http") }
+                val stream = "https://discoveryprovider.audius.co/v1/tracks/$id/stream?app_name=TunoMusic"
                 add(AudiusTrack(id, title, user?.optString("name")?.ifBlank { "Audius" } ?: "Audius",
-                    artwork, "https://api.audius.co/v1/tracks/$id/stream", item.optBoolean("is_downloadable", false)))
+                    artwork, stream, item.optBoolean("is_downloadable", false)))
             }
         }.distinctBy { it.id }
     } finally { connection.disconnect() }
 }
-
 
 private val tunoRadioStations = listOf(
     RadioStation("radius_fm", "Радиус FM", "Беларусь", "Поп · хиты",
@@ -841,6 +847,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             cover = track.artwork
         )
         val item = MediaItem.Builder().setMediaId("audius_" + track.id).setUri(track.streamUrl)
+            .setMimeType(MimeTypes.AUDIO_MPEG)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).setArtist(track.artist)
                 .setArtworkUri(track.artwork?.let { Uri.parse(it) }).build()).build()
         player.setMediaItem(item)
