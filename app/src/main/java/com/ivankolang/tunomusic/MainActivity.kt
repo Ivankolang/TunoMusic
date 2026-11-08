@@ -39,6 +39,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -103,7 +104,7 @@ private fun readPlaylists(context: Context): List<Playlist> {
                         val t = cloudArray.optJSONObject(j) ?: continue
                         val url = t.optString("url")
                         if (url.isNotBlank()) add(SoundCloudResult(t.optString("title"), t.optString("artist"), url,
-                            t.optString("artwork").takeIf { it.startsWith("http") }))
+                            t.optString("artwork").takeIf { it.startsWith("http") }, t.optBoolean("isPlaylist")))
                     }
                 }
                 add(Playlist(item.optString("id"), item.optString("name"), trackIds, cloudTracks))
@@ -119,7 +120,7 @@ private fun savePlaylists(context: Context, playlists: List<Playlist>) {
         playlist.trackIds.forEach { trackId -> ids.put(trackId) }
         val cloud = JSONArray()
         playlist.soundCloudTracks.forEach { t ->
-            cloud.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: ""))
+            cloud.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: "").put("isPlaylist", t.isPlaylist))
         }
         array.put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("trackIds", ids).put("soundCloudTracks", cloud))
     }
@@ -148,7 +149,7 @@ private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
 }
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
-data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?)
+data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?, val isPlaylist: Boolean = false)
 private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
     val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
     return runCatching {
@@ -387,6 +388,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var query by rememberSaveable { mutableStateOf("") }
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
+    var searchPlaylists by rememberSaveable { mutableStateOf(false) }
     var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 3600000L).toInt()) }
     var expandedMixTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
@@ -429,7 +431,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     val controller = controllerProvider()
     val homeMixes = remember(cloudFavorites, soundCloudResults, mixSeed) {
         val favorites = cloudFavorites.distinctBy { it.url }
-        val discoveries = soundCloudResults.distinctBy { it.url }
+        val discoveries = soundCloudResults.filterNot { it.isPlaylist }.distinctBy { it.url }
         val allCloud = (favorites + discoveries).distinctBy { it.url }
         buildList {
             if (allCloud.isNotEmpty()) add("Mix для тебя" to allCloud.shuffled(Random(mixSeed)).take(20))
@@ -470,7 +472,6 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         if (existingWeb == null) {
             serviceUrl = nextUrl
         } else {
-            existingWeb.tag = nextUrl
             val trackJson = JSONObject.quote(cloud.url)
             existingWeb.evaluateJavascript(
                 "window.tunoLoad ? (window.tunoLoad($trackJson), true) : false"
@@ -577,7 +578,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         searchIdle = false
         soundCloudResults = emptyList()
         soundCloudLoadFailed = false
-        serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
+        serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
     }
     val offlineImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         var imported = 0
@@ -914,7 +915,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Green
                         )
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !searchPlaylists, onClick = { searchPlaylists = false }, label = { Text("Треки") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
+                        FilterChip(selected = searchPlaylists, onClick = { searchPlaylists = true }, label = { Text("Плейлисты пользователей") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) })
+                    }
+                    Spacer(Modifier.height(8.dp))
                     if ((query.isBlank() || searchFocused) && !soundCloudEmbed) {
                         if (searchFocused && searchHistory.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -997,48 +1003,52 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             Text("Добавь треки в SoundCloud-избранное или найди музыку через поиск — здесь появятся Mix.",
                                 color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
                         } else {
-                            homeMixes.forEachIndexed { mixIndex, mix ->
-                                val mixTitle = mix.first
-                                val mixQueue = mix.second
-                                Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
-                                    Row(
-                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-                                            .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
-                                            .clickable { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }
-                                            .padding(15.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(Modifier.size(54.dp).clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0xFF315C40)), contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(30.dp))
-                                        }
-                                        Spacer(Modifier.width(13.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(mixTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                            Text("${mixQueue.size} треков · SoundCloud", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
-                                        }
-                                        Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(34.dp))
-                                    }
-                                    mixQueue.take(if (expandedMixTitle == mixTitle) mixQueue.size else 3).forEachIndexed { index, item ->
-                                        val cloud = item.cloud ?: return@forEachIndexed
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = 8.dp)) {
+                                items(homeMixes, key = { it.first }) { mix ->
+                                    val mixTitle = mix.first
+                                    val mixQueue = mix.second
+                                    Column(Modifier.width(286.dp).padding(bottom = 12.dp)) {
                                         Row(
-                                            Modifier.fillMaxWidth().clickable { playMixedQueueItem(mixQueue, index) }
-                                                .padding(vertical = 7.dp),
+                                            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
+                                                .clickable { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }
+                                                .padding(14.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            CoverThumb(cloud.artwork, 42)
+                                            Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                                                .background(Color(0xFF315C40)), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(27.dp))
+                                            }
                                             Spacer(Modifier.width(10.dp))
                                             Column(Modifier.weight(1f)) {
-                                                Text(cloud.title, color = Color.White, maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                                                Text("SoundCloud · ${cloud.artist}", color = Muted, maxLines = 1, fontSize = 11.sp)
+                                                Text(mixTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                Text(mixQueue.size.toString() + " треков · SoundCloud", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                                             }
-                                            Icon(Icons.Default.PlayArrow, null, tint = Green)
+                                            IconButton(onClick = { playMixedQueueItem(mixQueue, 0) }) {
+                                                Icon(Icons.Default.PlayCircleFilled, "Воспроизвести Mix", tint = Green, modifier = Modifier.size(31.dp))
+                                            }
                                         }
-                                    }
-                                    if (mixQueue.size > 3) {
-                                        TextButton(onClick = { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }) {
-                                            Text(if (expandedMixTitle == mixTitle) "Свернуть подборку" else "Показать все ${mixQueue.size} треков", color = Green)
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+                                            items(if (expandedMixTitle == mixTitle) mixQueue else mixQueue.take(3),
+                                                key = { it.cloud?.url ?: ("local-" + it.local?.id) }) { item ->
+                                                val cloud = item.cloud ?: return@items
+                                                Column(Modifier.width(138.dp).clip(RoundedCornerShape(14.dp))
+                                                    .background(Panel).clickable {
+                                                        expandedMixTitle = mixTitle
+                                                        val index = mixQueue.indexOfFirst { it.cloud?.url == cloud.url }
+                                                        playMixedQueueItem(mixQueue, index)
+                                                    }.padding(9.dp)) {
+                                                    CoverThumb(cloud.artwork, 112)
+                                                    Text(cloud.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                                        fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                                                    Text(cloud.artist, color = Muted, maxLines = 1, fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+                                        if (mixQueue.size > 3) {
+                                            TextButton(onClick = { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }) {
+                                                Text(if (expandedMixTitle == mixTitle) "Свернуть" else "Все " + mixQueue.size + " треков", color = Green)
+                                            }
                                         }
                                     }
                                 }
@@ -1137,7 +1147,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                             val title = item.optString("title")
                                                             if (url.isNotBlank() && title.isNotBlank()) {
                                                                 add(SoundCloudResult(title, item.optString("artist"), url,
-                                                                    item.optString("artwork").takeIf { it.startsWith("http") }))
+                                                                    item.optString("artwork").takeIf { it.startsWith("http") }, item.optBoolean("isPlaylist")))
                                                             }
                                                         }
                                                     }
@@ -1174,6 +1184,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                           if (window.__tunoObserver) window.__tunoObserver.disconnect();
                                                           if (window.__tunoPoll) clearInterval(window.__tunoPoll);
                                                           var seen = (window.__tunoSeen = Object.create(null));
+                                                           var playlistMode = location.pathname.indexOf('/search/sets') >= 0;
                                                           var timer = null;
                                                           function textOf(node) {
                                                             return node ? (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim() : "";
@@ -1202,7 +1213,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                             var direct = textOf(anchor) || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "";
                                                             direct = direct.replace(/^play\s+/i, "").trim();
                                                             if (direct.length >= 2 && direct.length <= 160) return direct;
-                                                            return decodeURIComponent(parts[1]).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+                                                            return decodeURIComponent(parts[2] || parts[1]).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
                                                           }
                                                           function collect() {
                                                             timer = null;
@@ -1215,9 +1226,16 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                                 var host = u.hostname.toLowerCase();
                                                                 if (host !== "soundcloud.com" && host !== "www.soundcloud.com" && host !== "m.soundcloud.com") continue;
                                                                 var parts = u.pathname.split("/").filter(Boolean);
-                                                                if (parts.length !== 2) continue;
-                                                                if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
-                                                                var clean = "https://soundcloud.com/" + parts[0] + "/" + parts[1];
+                                                                var isPlaylist = parts.length >= 3 && parts[1] === "sets";
+                                                                if (playlistMode) {
+                                                                  if (!isPlaylist) continue;
+                                                                } else {
+                                                                  if (parts.length !== 2) continue;
+                                                                  if (/^(search|discover|you|stream|charts|popular|stations|sets|tags|pages|upload|signin|signup)$/i.test(parts[0])) continue;
+                                                                }
+                                                                var clean = isPlaylist
+                                                                  ? "https://soundcloud.com/" + parts[0] + "/sets/" + parts[2]
+                                                                  : "https://soundcloud.com/" + parts[0] + "/" + parts[1];
                                                                 if (seen[clean]) continue;
                                                                 var title = titleFrom(a, parts);
                                                                 if (!title || title.length < 2 || title.length > 160) continue;
@@ -1228,7 +1246,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                                 var artist = textOf(artistNode) || decodeURIComponent(parts[0]).replace(/[-_]+/g, " ");
                                                                 seen[clean] = true;
                                                                 found.push({title:title, artist:artist, url:clean,
-                                                                  artwork:img ? (img.currentSrc || img.src || "") : ""});
+                                                                  artwork:img ? (img.currentSrc || img.src || "") : "", isPlaylist:isPlaylist});
                                                               } catch(e) {}
                                                             }
                                                             if (found.length && window.TunoBridge) {
@@ -1317,7 +1335,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 val q = URLEncoder.encode(query.trim(), "UTF-8")
                                                 soundCloudResults = emptyList()
                                                 soundCloudLoadFailed = false
-                                                serviceUrl = "https://soundcloud.com/search/sounds?q=$q&retry=" + System.currentTimeMillis()
+                                                serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=$q&retry=" + System.currentTimeMillis()
                                             }) { Text("Повторить поиск") }
                                         } else {
                                             CircularProgressIndicator(color = Green, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
@@ -1355,10 +1373,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 Column(Modifier.weight(1f)) {
                                                     Text(result.title, color = Color.White, maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                                                    Text(result.artist.ifBlank { "SoundCloud" }, color = Muted, fontSize = 12.sp,
+                                                    Text((if (result.isPlaylist) "Плейлист · " else "") + result.artist.ifBlank { "SoundCloud" }, color = Muted, fontSize = 12.sp,
                                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 }
-                                                Icon(Icons.Default.PlayCircle, null, tint = Green, modifier = Modifier.size(28.dp))
+                                                Icon(if (result.isPlaylist) Icons.Default.QueueMusic else Icons.Default.PlayCircle, null, tint = Green, modifier = Modifier.size(28.dp))
                                                 Box {
                                                     IconButton(onClick = { cloudMenu = true }) { Icon(Icons.Default.MoreVert, null, tint = Muted) }
                                                     DropdownMenu(expanded = cloudMenu, onDismissRequest = { cloudMenu = false }) {
