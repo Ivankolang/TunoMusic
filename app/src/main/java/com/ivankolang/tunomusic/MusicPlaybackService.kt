@@ -26,6 +26,11 @@ class MusicPlaybackService : MediaSessionService() {
         super.onCreate()
         val player = ExoPlayer.Builder(this).build()
         mediaSession = androidx.media3.session.MediaSession.Builder(this, player).build()
+        player.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onMediaMetadataChanged(metadata: androidx.media3.common.MediaMetadata) = updateWidgetFromPlayer()
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) = updateWidgetFromPlayer()
+            override fun onIsPlayingChanged(isPlaying: Boolean) = updateWidgetFromPlayer()
+        })
         createCloudNotificationChannel()
         cloudSession = MediaSession(this, "TunoSoundCloud").apply {
             setCallback(object : MediaSession.Callback() {
@@ -63,10 +68,12 @@ class MusicPlaybackService : MediaSessionService() {
                     updateCloudSession()
                     startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
                     sendCloudCommand(if (cloudPlaying) ACTION_CLOUD_PLAY else ACTION_CLOUD_PAUSE)
+                    updateWidgetCloud()
                 } else {
                     mediaSession?.player?.let { player ->
                         if (player.isPlaying || player.playWhenReady) player.pause() else player.play()
                     }
+                    updateWidgetFromPlayer()
                 }
             }
             ACTION_WIDGET_NEXT, ACTION_WIDGET_PREVIOUS -> {
@@ -87,6 +94,7 @@ class MusicPlaybackService : MediaSessionService() {
                 cloudPosition = intent.getLongExtra(EXTRA_POSITION, cloudPosition)
                 cloudPlaying = intent.action == ACTION_CLOUD_PLAY ||
                     (intent.action == ACTION_CLOUD_UPDATE && intent.getBooleanExtra(EXTRA_PLAYING, cloudPlaying))
+                updateWidgetCloud()
                 updateCloudSession()
                 startForeground(CLOUD_NOTIFICATION_ID, buildCloudNotification())
                 if (intent.getBooleanExtra(EXTRA_FROM_SYSTEM, false)) {
@@ -103,6 +111,31 @@ class MusicPlaybackService : MediaSessionService() {
             }
         }
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun updateWidgetCloud() {
+        getSharedPreferences("tuno_widget", MODE_PRIVATE).edit()
+            .putString("source", "cloud")
+            .putString("title", cloudTitle)
+            .putString("artist", cloudArtist)
+            .putString("artwork", cloudArtwork)
+            .putBoolean("playing", cloudPlaying)
+            .apply()
+        TunoMusicWidgetProvider.updateAll(this)
+    }
+
+    private fun updateWidgetFromPlayer() {
+        val player = mediaSession?.player ?: return
+        if (player.currentMediaItem == null) return
+        val metadata = player.mediaMetadata
+        getSharedPreferences("tuno_widget", MODE_PRIVATE).edit()
+            .putString("source", "media")
+            .putString("title", metadata.title?.toString() ?: "Tuno Music")
+            .putString("artist", metadata.artist?.toString() ?: "Твоя музыка")
+            .putString("artwork", metadata.artworkUri?.toString() ?: "")
+            .putBoolean("playing", player.isPlaying || player.playWhenReady)
+            .apply()
+        TunoMusicWidgetProvider.updateAll(this)
     }
 
     private fun updateCloudSession() {
