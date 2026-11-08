@@ -399,11 +399,12 @@ class MainActivity : ComponentActivity() {
     private fun loadAudioTracks(): List<AudioTrack> {
         val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
             else Manifest.permission.READ_EXTERNAL_STORAGE
-        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) return emptyList()
+        val canReadMedia = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
         val prefs = getSharedPreferences("track_edits", Context.MODE_PRIVATE)
         val result = mutableListOf<AudioTrack>()
         val hiddenIds = getSharedPreferences("track_edits", Context.MODE_PRIVATE)
             .getStringSet("hidden_tracks", emptySet()) ?: emptySet()
+        if (canReadMedia) {
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST)
         contentResolver.query(collection, projection, "${MediaStore.Audio.Media.IS_MUSIC} != 0", null,
@@ -420,6 +421,7 @@ class MainActivity : ComponentActivity() {
                         prefs.getString("title_$id", title) ?: title, prefs.getString("cover_$id", null), prefs.getBoolean("favorite_$id", false))
                 }
             }
+        }
         }
         val offlineFolder = File(filesDir, "offline_music")
         offlineFolder.listFiles()?.filter { it.isFile && it.length() > 0L }?.forEach { file ->
