@@ -419,6 +419,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudQueueIndex by remember { mutableIntStateOf(0) }
     var playbackQueue by remember { mutableStateOf(emptyList<PlaybackQueueItem>()) }
     var playbackQueueIndex by remember { mutableIntStateOf(0) }
+    var radioMood by rememberSaveable { mutableStateOf("Ночное") }
+    var radioPending by remember { mutableStateOf(false) }
+    var radioMode by rememberSaveable { mutableStateOf(false) }
+    var smartDjEnabled by rememberSaveable { mutableStateOf(true) }
+    var djFadeRunning by remember { mutableStateOf(false) }
     val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
     val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
     val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
@@ -511,7 +516,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
 
     fun playNextPlaybackQueueItem() {
-        if (playbackQueueIndex + 1 < playbackQueue.size) playMixedQueueItem(playbackQueue, playbackQueueIndex + 1)
+        if (playbackQueueIndex + 1 < playbackQueue.size) {
+            playMixedQueueItem(playbackQueue, playbackQueueIndex + 1)
+        } else if (radioMode && playbackQueue.isNotEmpty()) {
+            val nextRadioQueue = playbackQueue.shuffled()
+            playbackQueue = nextRadioQueue
+            playMixedQueueItem(nextRadioQueue, 0)
+        }
     }
 
     fun playPreviousPlaybackQueueItem() {
@@ -579,6 +590,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudResults = emptyList()
         soundCloudLoadFailed = false
         serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
+    }
+    fun startTunoRadio() {
+        if (offlineMode) return
+        val moodQuery = when (radioMood) {
+            "Спокойное" -> "chill ambient lofi"
+            "Энергичное" -> "energetic dance electronic"
+            "Грустное" -> "sad indie acoustic"
+            else -> "night drive synthwave"
+        }
+        radioMode = true
+        radioPending = true
+        searchPlaylists = false
+        startSoundCloudSearch(moodQuery)
     }
     val offlineImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         var imported = 0
@@ -649,6 +673,17 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             if (soundCloudResults.isEmpty()) soundCloudLoadFailed = true
         }
     }
+    LaunchedEffect(soundCloudResults, radioPending) {
+        if (radioPending && soundCloudResults.isNotEmpty()) {
+            val radioQueue = soundCloudResults.filterNot { it.isPlaylist }
+                .distinctBy { it.url }.take(20)
+                .map { PlaybackQueueItem(cloud = it) }
+            if (radioQueue.isNotEmpty()) {
+                radioPending = false
+                playMixedQueueItem(radioQueue, 0)
+            }
+        }
+    }
     DisposableEffect(controller, tracks, playbackQueue, playbackQueueIndex) {
         val player = controller
         val listener = object : Player.Listener {
@@ -678,14 +713,39 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(controller) {
         while (true) {
-            controller?.let {
-                playing = it.isPlaying
-                if (it.mediaItemCount > 0) {
-                    duration = (it.duration.coerceAtLeast(0L) / 1000f).coerceAtLeast(0f)
-                    position = (it.currentPosition.coerceAtLeast(0L) / 1000f).coerceAtLeast(0f)
+            controller?.let { player ->
+                playing = player.isPlaying
+                if (player.mediaItemCount > 0) {
+                    duration = (player.duration.coerceAtLeast(0L) / 1000f).coerceAtLeast(0f)
+                    position = (player.currentPosition.coerceAtLeast(0L) / 1000f).coerceAtLeast(0f)
+                }
+                val currentQueueItem = playbackQueue.getOrNull(playbackQueueIndex)
+                if (smartDjEnabled && !soundCloudEmbed && !djFadeRunning && player.isPlaying &&
+                    currentQueueItem?.local != null && playbackQueueIndex + 1 < playbackQueue.size &&
+                    player.duration > 0L && player.duration - player.currentPosition in 1L..1200L) {
+                    djFadeRunning = true
+                    val currentId = currentQueueItem.local.id.toString()
+                    val startVolume = player.volume.coerceIn(0f, 1f)
+                    repeat(6) { step ->
+                        delay(100)
+                        if (player.currentMediaItem?.mediaId == currentId) {
+                            player.volume = startVolume * (1f - (step + 1) / 6f)
+                        }
+                    }
+                    if (player.currentMediaItem?.mediaId == currentId && playbackQueueIndex + 1 < playbackQueue.size) {
+                        player.volume = 0f
+                        playNextPlaybackQueueItem()
+                        repeat(8) { step ->
+                            delay(65)
+                            player.volume = ((step + 1) / 8f).coerceIn(0f, 1f)
+                        }
+                    } else {
+                        player.volume = startVolume
+                    }
+                    djFadeRunning = false
                 }
             }
-            delay(500)
+            delay(250)
         }
     }
 
@@ -990,6 +1050,59 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                         if (query.isBlank() && !offlineMode) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(bottom = 14.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF1D3828), Color(0xFF111915))))
+                                .border(1.dp, Color(0xFF2C4936), RoundedCornerShape(20.dp))
+                                .padding(14.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("TUNO RADIO", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                                    Text("Музыка под настроение", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                                }
+                                TunoVisualizer(isPlaying = playing || soundCloudPlaying)
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                                listOf("Спокойное", "Энергичное", "Грустное", "Ночное").forEach { mood ->
+                                    FilterChip(
+                                        selected = radioMood == mood,
+                                        onClick = { radioMood = mood },
+                                        label = { Text(mood, fontSize = 10.sp, maxLines = 1) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Smart DJ", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("Плавные переходы для офлайн-треков", color = Muted, fontSize = 10.sp)
+                                }
+                                Switch(checked = smartDjEnabled, onCheckedChange = { smartDjEnabled = it })
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (radioPending) "Ищем музыку…" else if (radioMode) "Радио играет · следующий трек подберётся автоматически" else "Персональное радио из открытых треков SoundCloud",
+                                    color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1f)
+                                )
+                                Button(
+                                    onClick = {
+                                        if (radioMode) {
+                                            radioMode = false
+                                            radioPending = false
+                                        } else startTunoRadio()
+                                    },
+                                    enabled = !offlineMode && !radioPending,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C40))
+                                ) {
+                                    Icon(if (radioMode) Icons.Default.Stop else Icons.Default.PlayArrow, null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (radioMode) "Стоп" else "Радио")
+                                }
+                            }
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Твои Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
