@@ -156,6 +156,7 @@ private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
 data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?, val isPlaylist: Boolean = false)
+data class AudiusTrack(val id: String, val title: String, val artist: String, val artwork: String?, val streamUrl: String, val isDownloadable: Boolean)
 private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
     val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
     return runCatching {
@@ -380,6 +381,37 @@ private suspend fun searchRadioBrowser(query: String, countryFilter: String): Li
     }
 }
 
+private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withContext(Dispatchers.IO) {
+    val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+    val endpoint = URL("https://api.audius.co/v1/tracks/search?query=$encoded&limit=30")
+    val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 12000
+        readTimeout = 15000
+        setRequestProperty("User-Agent", "TunoMusic/1.0")
+        setRequestProperty("Accept", "application/json")
+    }
+    try {
+        val root = JSONObject(connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
+        val data = root.optJSONArray("data") ?: JSONArray()
+        buildList {
+            for (i in 0 until data.length()) {
+                val item = data.optJSONObject(i) ?: continue
+                val id = item.optString("id")
+                val title = item.optString("title").trim()
+                if (id.isBlank() || title.isBlank()) continue
+                val user = item.optJSONObject("user")
+                val art = item.optJSONObject("artwork")
+                val artwork = art?.optString("150x150")?.takeIf { it.startsWith("http") }
+                    ?: art?.optString("480x480")?.takeIf { it.startsWith("http") }
+                add(AudiusTrack(id, title, user?.optString("name")?.ifBlank { "Audius" } ?: "Audius",
+                    artwork, "https://api.audius.co/v1/tracks/$id/stream", item.optBoolean("is_downloadable", false)))
+            }
+        }.distinctBy { it.id }
+    } finally { connection.disconnect() }
+}
+
+
 private val tunoRadioStations = listOf(
     RadioStation("radius_fm", "Радиус FM", "Беларусь", "Поп · хиты",
         "https://stream2.datacenter.by/radiusfm_main", "https://radiusfm.by/"),
@@ -488,7 +520,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 3600000L).toInt()) }
     var expandedMixTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
-    var service by remember { mutableStateOf("SoundCloud") }
+    var service by rememberSaveable { mutableStateOf("SoundCloud") }
+    var audiusResults by remember { mutableStateOf(emptyList<AudiusTrack>()) }
+    var audiusLoading by remember { mutableStateOf(false) }
+    var audiusError by remember { mutableStateOf<String?>(null) }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
     var cloudFavorites by remember { mutableStateOf(readCloudFavorites(context)) }
     var activePlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -764,6 +799,54 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudLoadFailed = false
         serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
     }
+    fun startAudiusSearch(rawQuery: String) {
+        val cleanQuery = rawQuery.trim()
+        if (cleanQuery.isBlank() || offlineMode) return
+        query = cleanQuery
+        searchFocused = false
+        searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
+        saveSearchHistory(context, searchHistory)
+        service = "Audius"
+        soundCloudEmbed = false
+        searchIdle = false
+        serviceUrl = ""
+        soundCloudResults = emptyList()
+        audiusResults = emptyList()
+        audiusError = null
+        audiusLoading = true
+        scope.launch {
+            try {
+                audiusResults = searchAudiusTracks(cleanQuery)
+                if (audiusResults.isEmpty()) audiusError = "По этому запросу ничего не найдено."
+            } catch (error: Exception) {
+                audiusError = "Не удалось загрузить Audius. Проверь интернет и попробуй ещё раз."
+            } finally { audiusLoading = false }
+        }
+    }
+
+    fun playAudiusTrack(track: AudiusTrack) {
+        val player = controllerProvider() ?: return
+        stopSoundCloudPlayback()
+        soundCloudEmbed = false
+        soundCloudTrack = null
+        radioMode = false
+        playbackQueue = emptyList()
+        selectedTrack = AudioTrack(
+            id = -track.id.hashCode().toLong(),
+            originalTitle = track.title,
+            originalArtist = track.artist,
+            uri = Uri.parse(track.streamUrl),
+            customTitle = track.title,
+            cover = track.artwork
+        )
+        val item = MediaItem.Builder().setMediaId("audius_" + track.id).setUri(track.streamUrl)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).setArtist(track.artist)
+                .setArtworkUri(track.artwork?.let { Uri.parse(it) }).build()).build()
+        player.setMediaItem(item)
+        player.prepare()
+        player.play()
+    }
+
     fun startTunoRadio() {
         if (offlineMode) return
         val moodQuery = when (radioMood) {
@@ -1145,7 +1228,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("SOUNDCLOUD", color = Muted, fontSize = 9.sp,
+                            Text(service.uppercase(), color = Muted, fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
                             Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск музыки",
                                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -1164,7 +1247,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = { startSoundCloudSearch(query) }) {
+                        trailingIcon = { IconButton(onClick = { if (service == "Audius") startAudiusSearch(query) else startSoundCloudSearch(query) }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
                         } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1175,8 +1258,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = !searchPlaylists, onClick = { searchPlaylists = false }, label = { Text("Треки") })
-                        FilterChip(selected = searchPlaylists, onClick = { searchPlaylists = true }, label = { Text("Плейлисты") })
+                        FilterChip(selected = service == "SoundCloud", onClick = { service = "SoundCloud"; searchIdle = true; soundCloudEmbed = false; serviceUrl = ""; audiusResults = emptyList() }, label = { Text("SoundCloud") })
+                        FilterChip(selected = service == "Audius", onClick = { service = "Audius"; searchIdle = true; soundCloudEmbed = false; serviceUrl = ""; soundCloudResults = emptyList() }, label = { Text("Audius") })
+                    }
+                    if (service == "SoundCloud") {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = !searchPlaylists, onClick = { searchPlaylists = false }, label = { Text("Треки") })
+                            FilterChip(selected = searchPlaylists, onClick = { searchPlaylists = true }, label = { Text("Плейлисты") })
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     if ((query.isBlank() || searchFocused) && !soundCloudEmbed) {
@@ -1372,11 +1461,34 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
-                            Text("Поиск SoundCloud", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Поиск " + service, color = Color.White, fontWeight = FontWeight.SemiBold)
                             Text("Введи название трека или исполнителя", color = Muted, fontSize = 12.sp)
                         }
                     } else if (offlineMode) {
                         // Offline library is rendered above; no network content here.
+                    } else if (service == "Audius") {
+                        when {
+                            audiusLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Green) }
+                            audiusError != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(audiusError ?: "", color = Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                TextButton(onClick = { startAudiusSearch(query) }) { Text("Повторить", color = Green) }
+                            }
+                            audiusResults.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Введи запрос, чтобы найти музыку в Audius", color = Muted) }
+                            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
+                                items(audiusResults, key = { "audius-" + it.id }) { track ->
+                                    Row(Modifier.fillMaxWidth().clickable { playAudiusTrack(track) }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        CoverThumb(track.artwork, 52)
+                                        Spacer(Modifier.width(11.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(track.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                            Text(track.artist, color = Muted, fontSize = 11.sp, maxLines = 1)
+                                            Text(if (track.isDownloadable) "Автор разрешил скачивание" else "Только онлайн-прослушивание", color = if (track.isDownloadable) Green else Muted, fontSize = 10.sp)
+                                        }
+                                        IconButton(onClick = { playAudiusTrack(track) }) { Icon(Icons.Default.PlayArrow, null, tint = Green) }
+                                    }
+                                }
+                            }
+                        }
                     } else if (serviceUrl.isBlank()) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
