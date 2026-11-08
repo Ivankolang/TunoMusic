@@ -622,7 +622,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
     var searchPlaylists by rememberSaveable { mutableStateOf(false) }
-    var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 3600000L).toInt()) }
+    var mixSeed by remember { mutableIntStateOf((System.currentTimeMillis() / 1800000L).toInt()) }
+    var discoveryTracks by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
     var expandedMixTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
     var service by rememberSaveable { mutableStateOf("SoundCloud") }
@@ -763,15 +764,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         player.prepare()
         player.play()
     }
-    val homeMixes = remember(cloudFavorites, soundCloudResults, mixSeed) {
-        val favorites = cloudFavorites.distinctBy { it.url }
-        val discoveries = soundCloudResults.filterNot { it.isPlaylist }.distinctBy { it.url }
-        val allCloud = (favorites + discoveries).distinctBy { it.url }
-        buildList {
-            if (allCloud.isNotEmpty()) add("Mix для тебя" to allCloud.shuffled(Random(mixSeed)).take(20))
-            if (favorites.isNotEmpty()) add("Из SoundCloud-избранного" to favorites.shuffled(Random(mixSeed + 1)).take(20))
-            if (discoveries.isNotEmpty()) add("Новые открытия" to discoveries.shuffled(Random(mixSeed + 2)).take(20))
-        }.map { (title, tracks) -> title to tracks.map { PlaybackQueueItem(cloud = it) } }
+    val homeMixes = remember(cloudFavorites, discoveryTracks, tracks, mixSeed) {
+        val soundCloudDiscoveryMix = discoveryTracks.filterNot { it.isPlaylist }
+            .distinctBy { it.url }.shuffled(Random(mixSeed)).take(20)
+            .map { PlaybackQueueItem(cloud = it) }
+        val libraryAndFavorites = (tracks.map { PlaybackQueueItem(local = it) } +
+            cloudFavorites.distinctBy { it.url }.map { PlaybackQueueItem(cloud = it) })
+            .distinctBy { item -> item.local?.id?.toString() ?: item.cloud?.url.orEmpty() }
+            .shuffled(Random(mixSeed + 1)).take(20)
+        listOf(
+            "Mix 1 · Открытия SoundCloud" to soundCloudDiscoveryMix,
+            "Mix 2 · Моя медиатека" to libraryAndFavorites
+        )
     }
 
     fun playCloudQueueItem(queue: List<SoundCloudResult>, index: Int) {
@@ -1052,8 +1056,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(60L * 60L * 1000L)
-            mixSeed = (System.currentTimeMillis() / 3600000L).toInt()
+            delay(30L * 60L * 1000L)
+            mixSeed = (System.currentTimeMillis() / 1800000L).toInt()
         }
     }
     LaunchedEffect(playlists) {
@@ -1358,6 +1362,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 } else if (tab == 2) {
                     if (!homeSearchOpen) {
                         HomeDashboard(favorites = cloudFavorites, mixes = homeMixes,
+                            libraryTracks = tracks, discoveryTracks = discoveryTracks, refreshKey = mixSeed,
+                            onDiscoveryTracks = { discoveryTracks = it },
                             onSearch = { homeSearchOpen = true; searchIdle = true; soundCloudEmbed = false; serviceUrl = "" },
                             onPlayFavorite = { cloud -> playMixedQueueItem(listOf(PlaybackQueueItem(cloud = cloud)), 0) },
                             onPlayMix = { queue -> playMixedQueueItem(queue, 0) })
@@ -2627,6 +2633,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 private fun HomeDashboard(
     favorites: List<SoundCloudResult>,
     mixes: List<Pair<String, List<PlaybackQueueItem>>>,
+    libraryTracks: List<AudioTrack>,
+    discoveryTracks: List<SoundCloudResult>,
+    refreshKey: Int,
+    onDiscoveryTracks: (List<SoundCloudResult>) -> Unit,
     onSearch: () -> Unit,
     onPlayFavorite: (SoundCloudResult) -> Unit,
     onPlayMix: (List<PlaybackQueueItem>) -> Unit
