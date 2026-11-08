@@ -1831,13 +1831,17 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         AlertDialog(
             onDismissRequest = { trackToDelete = null },
             title = { Text("Удалить трек из Tuno?") },
-            text = { Text("«${target.customTitle}» исчезнет из медиатеки и плейлистов Tuno. Сам аудиофайл останется на телефоне.") },
+            text = { Text(if (target.uri.scheme == "file") "«${target.customTitle}» и импортированная копия будут удалены из офлайн-хранилища Tuno." else "«${target.customTitle}» исчезнет из медиатеки и плейлистов Tuno. Сам аудиофайл останется на телефоне.") },
             confirmButton = {
                 TextButton(onClick = {
                     val prefs = context.getSharedPreferences("track_edits", Context.MODE_PRIVATE)
-                    val hidden = (prefs.getStringSet("hidden_tracks", emptySet()) ?: emptySet()).toMutableSet()
-                    hidden.add(target.id.toString())
-                    prefs.edit().putStringSet("hidden_tracks", hidden).apply()
+                    if (target.uri.scheme == "file") {
+                        runCatching { File(target.uri.path ?: "").delete() }
+                    } else {
+                        val hidden = (prefs.getStringSet("hidden_tracks", emptySet()) ?: emptySet()).toMutableSet()
+                        hidden.add(target.id.toString())
+                        prefs.edit().putStringSet("hidden_tracks", hidden).apply()
+                    }
                     playlists = playlists.map { it.copy(trackIds = it.trackIds - target.id) }
                     savePlaylists(context, playlists)
                     controllerProvider()?.let { player ->
