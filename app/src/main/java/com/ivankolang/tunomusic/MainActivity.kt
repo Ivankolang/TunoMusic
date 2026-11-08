@@ -24,6 +24,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -1125,15 +1126,15 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         targetState = fullPlayer,
         transitionSpec = {
             if (targetState) {
-                (fadeIn(tween(260)) +
-                    slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it / 10 } +
-                    scaleIn(initialScale = 0.975f, animationSpec = tween(320, easing = FastOutSlowInEasing))) togetherWith
-                    (fadeOut(tween(150)) + scaleOut(targetScale = 0.985f, animationSpec = tween(150)))
+                (fadeIn(tween(360, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(420, easing = FastOutSlowInEasing)) { it / 10 } +
+                    scaleIn(initialScale = 0.975f, animationSpec = tween(420, easing = FastOutSlowInEasing))) togetherWith
+                    (fadeOut(tween(220, easing = FastOutSlowInEasing)) + scaleOut(targetScale = 0.985f, animationSpec = tween(220, easing = FastOutSlowInEasing)))
             } else {
-                (fadeIn(tween(220)) +
-                    slideInVertically(tween(280, easing = FastOutSlowInEasing)) { it / 12 }) togetherWith
-                    (fadeOut(tween(230)) +
-                        slideOutVertically(tween(260, easing = FastOutSlowInEasing)) { it / 14 } +
+                (fadeIn(tween(320, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(380, easing = FastOutSlowInEasing)) { it / 12 }) togetherWith
+                    (fadeOut(tween(300, easing = FastOutSlowInEasing)) +
+                        slideOutVertically(tween(360, easing = FastOutSlowInEasing)) { it / 14 } +
                         scaleOut(targetScale = 0.975f, animationSpec = tween(240)))
             }
         },
@@ -1200,7 +1201,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             }
         )
     } else {
-        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))) {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF17251D), Night, Night)))
+            .animateContentSize(animationSpec = tween(420, easing = FastOutSlowInEasing))) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
                 Spacer(Modifier.height(24.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
