@@ -439,12 +439,15 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
-    val homeMixQueue = remember(tracks, cloudFavorites, mixSeed) {
-        (tracks.map { PlaybackQueueItem(local = it) } +
-            cloudFavorites.map { PlaybackQueueItem(cloud = it) })
-            .distinctBy { it.local?.id?.toString() ?: it.cloud?.url.orEmpty() }
-            .shuffled(Random(mixSeed))
-            .take(20)
+    val homeMixes = remember(cloudFavorites, soundCloudResults, mixSeed) {
+        val favorites = cloudFavorites.distinctBy { it.url }
+        val discoveries = soundCloudResults.distinctBy { it.url }
+        val allCloud = (favorites + discoveries).distinctBy { it.url }
+        buildList {
+            if (allCloud.isNotEmpty()) add("Mix для тебя" to allCloud.shuffled(Random(mixSeed)).take(20))
+            if (favorites.isNotEmpty()) add("Из SoundCloud-избранного" to favorites.shuffled(Random(mixSeed + 1)).take(20))
+            if (discoveries.isNotEmpty()) add("Новые открытия" to discoveries.shuffled(Random(mixSeed + 2)).take(20))
+        }.map { (title, tracks) -> title to tracks.map { PlaybackQueueItem(cloud = it) } }
     }
 
     fun stopSoundCloudPlayback() {
@@ -918,55 +921,56 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Mix для тебя", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                                Text("Автоматическая подборка из твоей музыки", color = Muted, fontSize = 11.sp)
+                                Text("Твои Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                                Text("Автоматические подборки только из SoundCloud", color = Muted, fontSize = 11.sp)
                             }
                             IconButton(onClick = { mixSeed = (System.currentTimeMillis() / 1000L).toInt() }) {
                                 Icon(Icons.Default.Shuffle, "Обновить Mix", tint = Green)
                             }
                         }
-                        if (homeMixQueue.isEmpty()) {
-                            Text("Добавь песни в медиатеку или SoundCloud-избранное — здесь появится твой Mix.",
+                        if (homeMixes.isEmpty()) {
+                            Text("Добавь треки в SoundCloud-избранное или найди музыку через поиск — здесь появятся Mix.",
                                 color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
                         } else {
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-                                    .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
-                                    .clickable { playMixedQueueItem(homeMixQueue, 0) }
-                                    .padding(15.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(Modifier.size(54.dp).clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF315C40)), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(30.dp))
-                                }
-                                Spacer(Modifier.width(13.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text("Твой ежедневный Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                    Text("${homeMixQueue.size} треков · перемешано автоматически", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
-                                }
-                                Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(34.dp))
-                            }
-                            homeMixQueue.take(4).forEachIndexed { index, item ->
-                                val local = item.local
-                                val cloud = item.cloud
-                                Row(
-                                    Modifier.fillMaxWidth().clickable { playMixedQueueItem(homeMixQueue, index) }
-                                        .padding(vertical = 7.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (local != null) CoverThumb(local.cover, 42)
-                                    else if (cloud?.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null,
-                                        modifier = Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
-                                    else CoverThumb(null, 42)
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(local?.customTitle ?: cloud?.title.orEmpty(), color = Color.White, maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                                        Text(local?.originalArtist ?: "SoundCloud · ${cloud?.artist.orEmpty()}",
-                                            color = Muted, maxLines = 1, fontSize = 11.sp)
+                            homeMixes.forEachIndexed { mixIndex, mix ->
+                                val mixTitle = mix.first
+                                val mixQueue = mix.second
+                                Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                                            .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
+                                            .clickable { playMixedQueueItem(mixQueue, 0) }
+                                            .padding(15.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(Modifier.size(54.dp).clip(RoundedCornerShape(14.dp))
+                                            .background(Color(0xFF315C40)), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(30.dp))
+                                        }
+                                        Spacer(Modifier.width(13.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(mixTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                            Text("${mixQueue.size} треков · SoundCloud", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                        }
+                                        Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(34.dp))
                                     }
-                                    Icon(Icons.Default.PlayArrow, null, tint = Green)
+                                    mixQueue.take(3).forEachIndexed { index, item ->
+                                        val cloud = item.cloud ?: return@forEachIndexed
+                                        Row(
+                                            Modifier.fillMaxWidth().clickable { playMixedQueueItem(mixQueue, index) }
+                                                .padding(vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            CoverThumb(cloud.artwork, 42)
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(cloud.title, color = Color.White, maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                                Text("SoundCloud · ${cloud.artist}", color = Muted, maxLines = 1, fontSize = 11.sp)
+                                            }
+                                            Icon(Icons.Default.PlayArrow, null, tint = Green)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1517,12 +1521,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 )
             }
             NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
+                    icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
                 NavigationBarItem(selected = tab == 3, onClick = { tab = 3; activePlaylistId = null },
                     icon = { Icon(Icons.Default.QueueMusic, null) }, label = { Text("Плейлисты") })
             }
