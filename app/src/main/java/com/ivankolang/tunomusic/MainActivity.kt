@@ -10,6 +10,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.widget.Toast
+import android.app.DownloadManager
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.WebView
@@ -156,7 +159,7 @@ private fun importOfflineAudio(context: Context, uri: Uri): Boolean {
 
 data class Playlist(val id: String, val name: String, val trackIds: List<Long>, val soundCloudTracks: List<SoundCloudResult> = emptyList())
 data class SoundCloudResult(val title: String, val artist: String, val url: String, val artwork: String?, val isPlaylist: Boolean = false)
-data class AudiusTrack(val id: String, val title: String, val artist: String, val artwork: String?, val streamUrl: String, val isDownloadable: Boolean)
+data class AudiusTrack(val id: String, val title: String, val artist: String, val artwork: String?, val streamUrl: String, val downloadUrl: String, val isDownloadable: Boolean)
 private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
     val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
     return runCatching {
@@ -411,11 +414,38 @@ private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withC
                 val artwork = art?.optString("150x150")?.takeIf { it.startsWith("http") }
                     ?: art?.optString("480x480")?.takeIf { it.startsWith("http") }
                 val stream = "https://discoveryprovider.audius.co/v1/tracks/$id/stream?app_name=TunoMusic"
+                val downloadable = item.optBoolean("is_downloadable", false)
+                val download = "https://discoveryprovider.audius.co/v1/tracks/$id/download?app_name=TunoMusic"
                 add(AudiusTrack(id, title, user?.optString("name")?.ifBlank { "Audius" } ?: "Audius",
-                    artwork, stream, item.optBoolean("is_downloadable", false)))
+                    artwork, stream, download, downloadable))
             }
         }.distinctBy { it.id }
     } finally { connection.disconnect() }
+}
+
+private suspend fun downloadAudiusTrack(context: Context, track: AudiusTrack): Boolean = withContext(Dispatchers.IO) {
+    if (!track.isDownloadable) return@withContext false
+    val connection = (URL(track.downloadUrl).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 15000
+        readTimeout = 60000
+        instanceFollowRedirects = true
+        setRequestProperty("User-Agent", "TunoMusic/1.0")
+        setRequestProperty("Accept", "audio/*,*/*")
+    }
+    try {
+        val status = connection.responseCode
+        if (status !in 200..299) return@withContext false
+        val folder = File(context.filesDir, "offline_music").apply { mkdirs() }
+        val safeTitle = track.title.replace(Regex("[^A-Za-z0-9А-Яа-я._ -]"), "_").take(70).ifBlank { "Audius_track" }
+        val target = File(folder, safeTitle + "_" + track.id.hashCode().toUInt().toString(16) + ".mp3")
+        connection.inputStream.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
+        if (target.length() > 0L) true else { target.delete(); false }
+    } catch (_: Exception) {
+        false
+    } finally {
+        connection.disconnect()
+    }
 }
 
 private val tunoRadioStations = listOf(
@@ -530,6 +560,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var audiusResults by remember { mutableStateOf(emptyList<AudiusTrack>()) }
     var audiusLoading by remember { mutableStateOf(false) }
     var audiusError by remember { mutableStateOf<String?>(null) }
+    var currentAudiusTrack by remember { mutableStateOf<AudiusTrack?>(null) }
+    var audiusDownloading by remember { mutableStateOf(false) }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
     var cloudFavorites by remember { mutableStateOf(readCloudFavorites(context)) }
     var activePlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -832,6 +864,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
 
     fun playAudiusTrack(track: AudiusTrack) {
+        currentAudiusTrack = track
         val player = controllerProvider() ?: return
         stopSoundCloudPlayback()
         soundCloudEmbed = false
@@ -1061,11 +1094,24 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             track = selectedTrack,
             cloudTrack = if (soundCloudEmbed) soundCloudTrack else null,
             cloudFavorite = soundCloudTrack?.let { cloud -> cloudFavorites.any { it.url == cloud.url } } == true,
+            audiusTrack = currentAudiusTrack,
             playing = if (soundCloudEmbed) soundCloudPlaying else playing,
             position = if (soundCloudEmbed) soundCloudPosition / 1000f else position,
             duration = if (soundCloudEmbed) soundCloudDuration / 1000f else duration,
             onBack = { fullPlayer = false },
             onAddToPlaylist = { showCloudPlaylistPicker = true },
+            onDownload = {
+                val track = currentAudiusTrack
+                if (track != null && track.isDownloadable && !audiusDownloading) scope.launch {
+                    audiusDownloading = true
+                    val saved = downloadAudiusTrack(context, track)
+                    if (saved) {
+                        tracks = loadTracks()
+                        Toast.makeText(context, "Трек сохранён офлайн", Toast.LENGTH_SHORT).show()
+                    } else Toast.makeText(context, "Не удалось скачать трек", Toast.LENGTH_SHORT).show()
+                    audiusDownloading = false
+                }
+            },
             onPlayPause = {
                 if (soundCloudEmbed) soundCloudWebView?.evaluateJavascript("window.tunoToggle && window.tunoToggle()", null)
                 else controllerProvider()?.let { if (it.isPlaying || it.playWhenReady) it.pause() else it.play() }
@@ -2475,7 +2521,8 @@ private fun FullPlayerScreen(
     cloudTrack: SoundCloudResult? = null, cloudFavorite: Boolean = false,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
-    onFavorite: () -> Unit, onAddToPlaylist: () -> Unit = {}
+    onFavorite: () -> Unit, onAddToPlaylist: () -> Unit = {},
+    audiusTrack: AudiusTrack? = null, onDownload: () -> Unit = {}
 ) {
     val displayTitle = cloudTrack?.title ?: track?.customTitle ?: "Выбери трек"
     val displayArtist = cloudTrack?.artist ?: track?.originalArtist ?: "Неизвестный исполнитель"
@@ -2547,7 +2594,16 @@ private fun FullPlayerScreen(
             IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             if (cloudTrack != null) IconButton(onClick = onAddToPlaylist) {
                 Icon(Icons.Default.PlaylistAdd, "Добавить в плейлист", tint = Green, modifier = Modifier.size(28.dp))
-            } else IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+            } else if (audiusTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+        }
+        if (audiusTrack?.isDownloadable == true) {
+            OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Green),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Green.copy(alpha = 0.65f))) {
+                Icon(Icons.Default.Download, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Скачать для офлайн-прослушивания")
+            }
         }
         Spacer(Modifier.height(18.dp))
     }
