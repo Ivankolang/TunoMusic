@@ -695,7 +695,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         }
     }
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+        tracks = loadTracks()
     }
     LaunchedEffect(offlineMode) {
         if (offlineMode) {
