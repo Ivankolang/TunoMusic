@@ -321,7 +321,8 @@ data class RadioStation(
     val country: String,
     val genre: String,
     val streamUrl: String,
-    val website: String
+    val website: String,
+    val codec: String = ""
 )
 
 data class RadioFilter(val name: String, val country: String, val genre: String)
@@ -347,46 +348,59 @@ private fun saveRadioFilters(context: Context, filters: List<RadioFilter>) {
 }
 
 private suspend fun searchRadioBrowser(query: String, countryFilter: String): List<RadioStation> = withContext(Dispatchers.IO) {
-    val base = "https://de1.api.radio-browser.info/json/"
-    val endpoint = if (query.isBlank() && countryFilter != "Беларусь") "stations/topvote/100" else {
-        val params = buildList {
-            if (query.isNotBlank()) add("name=" + URLEncoder.encode(query.trim(), "UTF-8"))
-            add("limit=100")
-            add("hidebroken=true")
-            add("order=clickcount")
-            add("reverse=true")
-            if (countryFilter == "Беларусь") add("countrycode=BY")
-        }.joinToString("&")
-        "stations/search?$params"
+    val countryCode = when (countryFilter) {
+        "Беларусь" -> "BY"
+        "Россия" -> "RU"
+        "Украина" -> "UA"
+        else -> null
     }
-    val connection = (URL(base + endpoint).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 10000
-        readTimeout = 12000
-        setRequestProperty("User-Agent", "TunoMusic/1.0")
-        setRequestProperty("Accept", "application/json")
-    }
-    try {
-        val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        val array = JSONArray(body)
-        buildList {
-            for (i in 0 until array.length()) {
-                val item = array.optJSONObject(i) ?: continue
-                val stream = item.optString("url_resolved").ifBlank { item.optString("url") }
-                val name = item.optString("name").trim()
-                if (name.isBlank() || !stream.startsWith("http")) continue
-                val country = item.optString("country").ifBlank { "Неизвестная страна" }
-                val tags = item.optString("tags").split(",").map { it.trim() }.filter { it.isNotBlank() }.take(3)
-                val genre = tags.joinToString(" · ").ifBlank { item.optString("codec").ifBlank { "Интернет-радио" } }
-                val uuid = item.optString("stationuuid").ifBlank { stream.hashCode().toString() }
-                add(RadioStation("rb_$uuid", name, country, genre, stream, item.optString("homepage")))
+    val params = buildList {
+        if (query.isNotBlank()) add("name=" + URLEncoder.encode(query.trim(), "UTF-8"))
+        if (countryCode != null) add("countrycode=" + countryCode)
+        add("limit=100")
+        add("hidebroken=true")
+        add("order=clickcount")
+        add("reverse=true")
+    }.joinToString("&")
+    val endpoint = if (query.isBlank() && countryCode == null) "stations/topvote/100" else "stations/search?$params"
+    val hosts = listOf("de1.api.radio-browser.info", "nl1.api.radio-browser.info", "at1.api.radio-browser.info")
+    var lastError: Exception? = null
+    for (host in hosts) {
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL("https://$host/json/$endpoint").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 10000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "TunoMusic/1.1")
+                setRequestProperty("Accept", "application/json")
             }
-        }.distinctBy { it.id }
-    } finally {
-        connection.disconnect()
+            if (connection.responseCode !in 200..299) throw IllegalStateException("Radio catalog HTTP " + connection.responseCode)
+            val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val array = JSONArray(body)
+            return@withContext buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val stream = item.optString("url_resolved").ifBlank { item.optString("url") }
+                    val name = item.optString("name").trim()
+                    if (name.isBlank() || !(stream.startsWith("http://") || stream.startsWith("https://"))) continue
+                    val country = item.optString("country").ifBlank { "Неизвестная страна" }
+                    val codec = item.optString("codec").uppercase()
+                    val tags = item.optString("tags").split(",").map { it.trim() }.filter { it.isNotBlank() }.take(3)
+                    val genre = tags.joinToString(" · ").ifBlank { codec.ifBlank { "Интернет-радио" } }
+                    val uuid = item.optString("stationuuid").ifBlank { stream.hashCode().toString() }
+                    add(RadioStation("rb_$uuid", name, country, genre, stream, item.optString("homepage"), codec))
+                }
+            }.distinctBy { it.id }
+        } catch (error: Exception) {
+            lastError = error
+        } finally {
+            connection?.disconnect()
+        }
     }
+    throw (lastError ?: IllegalStateException("Radio catalog unavailable"))
 }
-
 private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withContext(Dispatchers.IO) {
     val encoded = URLEncoder.encode(query.trim(), "UTF-8")
     // Audius discovery nodes require an app_name identifier and may differ in availability.
@@ -730,8 +744,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             .setMediaMetadata(metadata)
         // These stations expose AAC/AAC+ streams without a file extension.
         // Explicit MIME type lets Media3 select its AAC extractor reliably.
-        if (station.id == "radius_fm" || station.id == "alfa_radio" || station.id == "radio_stalica") {
-            itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+        when (station.codec.uppercase()) {
+            "AAC", "AAC+" -> itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+            "MP3" -> itemBuilder.setMimeType(MimeTypes.AUDIO_MPEG)
+            "OGG", "OPUS" -> itemBuilder.setMimeType(MimeTypes.AUDIO_OGG)
+            "FLAC" -> itemBuilder.setMimeType(MimeTypes.AUDIO_FLAC)
+            else -> if (station.id == "radius_fm" || station.id == "alfa_radio" || station.id == "radio_stalica") {
+                itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+            }
         }
         val item = itemBuilder.build()
         player.setMediaItem(item)
@@ -1217,7 +1237,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                if (tab == 0 || tab == 1 || tab == 3) {
+                if (tab == 0 || tab == 1) {
                     Row(
                         modifier = Modifier.fillMaxWidth()
                             .background(Color(0xFF111915), RoundedCornerShape(16.dp))
@@ -2040,7 +2060,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         )
                         Spacer(Modifier.height(9.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
-                            items(listOf("Все", "Беларусь", "Мир", "Избранное")) { category ->
+                            items(listOf("Все", "Беларусь", "Россия", "Украина", "Мир", "Избранное")) { category ->
                                 FilterChip(selected = selectedRadioFilter == null && radioCountry == category,
                                     onClick = { radioCountry = category; selectedRadioFilter = null },
                                     label = { Text(category, fontSize = 11.sp) })
@@ -2117,7 +2137,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 (activeCustomFilter.country == "Все" || station.country.equals(activeCustomFilter.country, true)) &&
                                     (activeCustomFilter.genre.isBlank() || station.genre.contains(activeCustomFilter.genre, true) || station.name.contains(activeCustomFilter.genre, true))
                             } else when (radioCountry) {
-                                "Беларусь" -> station.country.equals("Беларусь", true) &&
+                                "Беларусь", "Россия", "Украина" -> station.country.equals(radioCountry, true) &&
                                     (station.name.contains(radioQuery, true) || station.genre.contains(radioQuery, true))
                                 "Мир" -> !station.country.equals("Беларусь", true) &&
                                     (station.name.contains(radioQuery, true) || station.genre.contains(radioQuery, true) ||
@@ -2190,6 +2210,25 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
                     }
                 } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Color(0xFF111915), RoundedCornerShape(16.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf("Треки", "Избранное", "Плейлисты").forEachIndexed { index, label ->
+                            val targetTab = when (index) { 1 -> 1; 2 -> 3; else -> 0 }
+                            val active = tab == targetTab
+                            Text(label, color = if (active) Color.White else Muted,
+                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) Color(0xFF294633) else Color.Transparent)
+                                    .clickable { tab = targetTab; activePlaylistId = null }
+                                    .padding(vertical = 10.dp),
+                                textAlign = TextAlign.Center, fontSize = 13.sp,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     if (activePlaylist == null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Твои плейлисты", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
