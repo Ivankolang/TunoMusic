@@ -56,6 +56,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -398,6 +399,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var editTitle by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
+    var searchFocused by rememberSaveable { mutableStateOf(false) }
     var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 86400000L).toInt()) }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
@@ -581,6 +583,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         val cleanQuery = rawQuery.trim()
         if (cleanQuery.isBlank()) return
         query = cleanQuery
+        searchFocused = false
         searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
         saveSearchHistory(context, searchHistory)
         soundCloudEmbed = false
@@ -625,6 +628,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+    }
+    LaunchedEffect(playlists) {
+        savePlaylists(context, playlists)
     }
     LaunchedEffect(serviceUrl, soundCloudResults) {
         if (serviceUrl.isNotBlank() && !soundCloudEmbed && soundCloudResults.isEmpty()) {
@@ -880,7 +886,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        modifier = Modifier.fillMaxWidth(0.88f).align(Alignment.CenterHorizontally)
+                            .onFocusChanged { searchFocused = it.isFocused }, singleLine = true,
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
@@ -895,7 +902,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     )
                     Spacer(Modifier.height(12.dp))
                     if (query.isBlank() && !catalogLoading && !soundCloudEmbed) {
-                        if (searchHistory.isNotEmpty()) {
+                        if (searchFocused && searchHistory.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("История поиска", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                                 Spacer(Modifier.weight(1f))
