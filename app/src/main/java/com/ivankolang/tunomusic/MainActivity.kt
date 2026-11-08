@@ -388,6 +388,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
     var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 3600000L).toInt()) }
+    var expandedMixTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
@@ -459,7 +460,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudDuration = 0L
         soundCloudPlaying = false
         soundCloudEmbed = true
-        tab = 2
+        // Keep the current tab/screen: playback must not redirect the user to Home/Search.
         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
         val nextUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
         // Reuse the existing SoundCloud widget when possible. Reload the HTML only
@@ -1003,7 +1004,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     Row(
                                         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
                                             .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
-                                            .clickable { playMixedQueueItem(mixQueue, 0) }
+                                            .clickable { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }
                                             .padding(15.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1018,7 +1019,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         }
                                         Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(34.dp))
                                     }
-                                    mixQueue.take(3).forEachIndexed { index, item ->
+                                    mixQueue.take(if (expandedMixTitle == mixTitle) mixQueue.size else 3).forEachIndexed { index, item ->
                                         val cloud = item.cloud ?: return@forEachIndexed
                                         Row(
                                             Modifier.fillMaxWidth().clickable { playMixedQueueItem(mixQueue, index) }
@@ -1033,6 +1034,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 Text("SoundCloud · ${cloud.artist}", color = Muted, maxLines = 1, fontSize = 11.sp)
                                             }
                                             Icon(Icons.Default.PlayArrow, null, tint = Green)
+                                        }
+                                    }
+                                    if (mixQueue.size > 3) {
+                                        TextButton(onClick = { expandedMixTitle = if (expandedMixTitle == mixTitle) null else mixTitle }) {
+                                            Text(if (expandedMixTitle == mixTitle) "Свернуть подборку" else "Показать все ${mixQueue.size} треков", color = Green)
                                         }
                                     }
                                 }
