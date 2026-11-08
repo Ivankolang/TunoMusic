@@ -421,7 +421,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var query by rememberSaveable { mutableStateOf("") }
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
-    var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 86400000L).toInt()) }
+    var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 3600000L).toInt()) }
+    var offlineMode by rememberSaveable { mutableStateOf(false) }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
     var cloudFavorites by remember { mutableStateOf(readCloudFavorites(context)) }
@@ -649,6 +650,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) tracks = loadTracks()
+        if (!offlineMode && serviceUrl.isBlank()) {
+            catalogMode = false
+            val discoveryTerms = listOf("new music", "indie pop", "electronic", "lofi", "alternative rock")
+            val term = discoveryTerms[Random.nextInt(discoveryTerms.size)]
+            serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(term, "UTF-8")
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60L * 60L * 1000L)
+            mixSeed = (System.currentTimeMillis() / 3600000L).toInt()
+        }
     }
     LaunchedEffect(playlists) {
         savePlaylists(context, playlists)
@@ -774,7 +787,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                         Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Дом"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
                     }
-                    Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
+                    IconButton(onClick = { offlineMode = !offlineMode }) {
+                        Icon(if (offlineMode) Icons.Default.CloudOff else Icons.Default.CloudQueue,
+                            if (offlineMode) "Офлайн-режим включён" else "Офлайн-режим выключен",
+                            tint = if (offlineMode) Green else Muted, modifier = Modifier.size(26.dp))
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
                 if (tab == 0 || tab == 1) {
@@ -907,7 +924,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(0.88f).align(Alignment.CenterHorizontally)
+                        modifier = Modifier.fillMaxWidth().height(52.dp).align(Alignment.CenterHorizontally)
                             .onFocusChanged { searchFocused = it.isFocused }, singleLine = true,
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
@@ -922,7 +939,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         )
                     )
                     Spacer(Modifier.height(12.dp))
-                    if (query.isBlank() && !catalogLoading && !soundCloudEmbed) {
+                    if ((query.isBlank() || searchFocused) && !catalogLoading && !soundCloudEmbed) {
                         if (searchFocused && searchHistory.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("История поиска", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
@@ -932,7 +949,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     saveSearchHistory(context, searchHistory)
                                 }) { Text("Очистить", color = Muted, fontSize = 12.sp) }
                             }
-                            searchHistory.forEach { historyQuery ->
+                            searchHistory.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.forEach { historyQuery ->
                                 Row(
                                     Modifier.fillMaxWidth().clickable { startCatalogSearch(historyQuery) }
                                         .padding(vertical = 5.dp),
@@ -947,6 +964,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             Spacer(Modifier.height(10.dp))
                         }
+                        if (query.isBlank()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Твои Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
@@ -1003,6 +1021,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                         Spacer(Modifier.height(14.dp))
+                        }
                     }
                     if (catalogMode) {
                         when {
