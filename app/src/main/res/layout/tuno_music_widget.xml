@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="12dp"
+    android:background="@drawable/tuno_widget_background">
+
+    <ImageView
+        android:id="@+id/widget_cover"
+        android:layout_width="76dp"
+        android:layout_height="76dp"
+        android:scaleType="centerCrop"
+        android:contentDescription="Обложка трека"
+        android:src="@drawable/ic_tuno_launcher" />
+
+    <LinearLayout
+        android:id="@+id/widget_text_area"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tuno Music"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="Твоя музыка"
+            android:textColor="#A6B4AA"
+            android:textSize="11sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="7dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/widget_previous"
+                android:layout_width="38dp"
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                android:contentDescription="Предыдущий трек"
+                android:padding="8dp"
+                android:src="@android:drawable/ic_media_previous"
+                android:tint="#D7E8DC" />
+
+            <ImageButton
+                android:id="@+id/widget_play"
+                android:layout_width="42dp"
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                android:contentDescription="Воспроизведение или пауза"
+                android:padding="7dp"
+                android:src="@android:drawable/ic_media_play"
+                android:tint="#9BE7B1" />
+
+            <ImageButton
+                android:id="@+id/widget_next"
+                android:layout_width="38dp"
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                android:contentDescription="Следующий трек"
+                android:padding="8dp"
+                android:src="@android:drawable/ic_media_next"
+                android:tint="#D7E8DC" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
