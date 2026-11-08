@@ -385,7 +385,12 @@ private suspend fun searchRadioBrowser(query: String, countryFilter: String): Li
                     val stream = item.optString("url_resolved").ifBlank { item.optString("url") }
                     val name = item.optString("name").trim()
                     if (name.isBlank() || !(stream.startsWith("http://") || stream.startsWith("https://"))) continue
-                    val country = item.optString("country").ifBlank { "Неизвестная страна" }
+                    val country = when (item.optString("countrycode").uppercase()) {
+                        "BY" -> "Беларусь"
+                        "RU" -> "Россия"
+                        "UA" -> "Украина"
+                        else -> item.optString("country").ifBlank { "Неизвестная страна" }
+                    }
                     val codec = item.optString("codec").uppercase()
                     val tags = item.optString("tags").split(",").map { it.trim() }.filter { it.isNotBlank() }.take(3)
                     val genre = tags.joinToString(" · ").ifBlank { codec.ifBlank { "Интернет-радио" } }
