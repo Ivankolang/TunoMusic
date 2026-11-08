@@ -425,27 +425,73 @@ private suspend fun searchAudiusTracks(query: String): List<AudiusTrack> = withC
 
 private suspend fun downloadAudiusTrack(context: Context, track: AudiusTrack): Boolean = withContext(Dispatchers.IO) {
     if (!track.isDownloadable) return@withContext false
-    val connection = (URL(track.downloadUrl).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 15000
-        readTimeout = 60000
-        instanceFollowRedirects = true
-        setRequestProperty("User-Agent", "TunoMusic/1.0")
-        setRequestProperty("Accept", "audio/*,*/*")
+
+    // Try the discovery node first, then Audius' documented API host.
+    val urls = listOf(
+        track.downloadUrl,
+        "https://api.audius.co/v1/tracks/${track.id}/download?app_name=TunoMusic"
+    ).distinct()
+    val folder = File(context.filesDir, "offline_music").apply { mkdirs() }
+    val safeTitle = track.title.replace(Regex("[^A-Za-z0-9А-Яа-я._ -]"), "_")
+        .take(70).ifBlank { "Audius_track" }
+    val baseName = safeTitle + "_" + track.id.hashCode().toUInt().toString(16)
+
+    for (address in urls) {
+        var connection: HttpURLConnection? = null
+        val temp = File(folder, "$baseName.part")
+        try {
+            connection = (URL(address).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 20000
+                readTimeout = 90000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "TunoMusic/1.0")
+                setRequestProperty("Accept", "audio/*, application/octet-stream;q=0.9, */*;q=0.8")
+                setRequestProperty("Accept-Encoding", "identity")
+            }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                temp.delete()
+                continue
+            }
+
+            val mime = connection.contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+            if (mime.contains("json") || mime.startsWith("text/") || mime.contains("html")) {
+                temp.delete()
+                continue
+            }
+
+            connection.inputStream.use { input ->
+                FileOutputStream(temp).use { output -> input.copyTo(output) }
+            }
+            if (temp.length() <= 0L) {
+                temp.delete()
+                continue
+            }
+
+            val extension = when {
+                mime.contains("mpeg") || mime.contains("mp3") -> "mp3"
+                mime.contains("mp4") || mime.contains("m4a") -> "m4a"
+                mime.contains("aac") -> "aac"
+                mime.contains("ogg") -> "ogg"
+                mime.contains("flac") -> "flac"
+                mime.contains("wav") || mime.contains("wave") -> "wav"
+                else -> "mp3"
+            }
+            val target = File(folder, "$baseName.$extension")
+            if (target.exists()) target.delete()
+            if (temp.renameTo(target)) return@withContext true
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
+            if (target.length() > 0L) return@withContext true
+            target.delete()
+        } catch (_: Exception) {
+            temp.delete()
+        } finally {
+            connection?.disconnect()
+        }
     }
-    try {
-        val status = connection.responseCode
-        if (status !in 200..299) return@withContext false
-        val folder = File(context.filesDir, "offline_music").apply { mkdirs() }
-        val safeTitle = track.title.replace(Regex("[^A-Za-z0-9А-Яа-я._ -]"), "_").take(70).ifBlank { "Audius_track" }
-        val target = File(folder, safeTitle + "_" + track.id.hashCode().toUInt().toString(16) + ".mp3")
-        connection.inputStream.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
-        if (target.length() > 0L) true else { target.delete(); false }
-    } catch (_: Exception) {
-        false
-    } finally {
-        connection.disconnect()
-    }
+    false
 }
 
 private val tunoRadioStations = listOf(
