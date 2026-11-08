@@ -469,6 +469,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+    fun stopSoundCloudPlayback() {
+        soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
+        soundCloudPlaying = false
+        runCatching {
+            context.startService(Intent(context, MusicPlaybackService::class.java).setAction(MusicPlaybackService.ACTION_CLOUD_STOP))
+        }
+    }
+
     fun playRadioStation(station: RadioStation) {
         val player = controllerProvider() ?: return
         stopSoundCloudPlayback()
@@ -500,14 +508,6 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             if (favorites.isNotEmpty()) add("Из SoundCloud-избранного" to favorites.shuffled(Random(mixSeed + 1)).take(20))
             if (discoveries.isNotEmpty()) add("Новые открытия" to discoveries.shuffled(Random(mixSeed + 2)).take(20))
         }.map { (title, tracks) -> title to tracks.map { PlaybackQueueItem(cloud = it) } }
-    }
-
-    fun stopSoundCloudPlayback() {
-        soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
-        soundCloudPlaying = false
-        runCatching {
-            context.startService(Intent(context, MusicPlaybackService::class.java).setAction(MusicPlaybackService.ACTION_CLOUD_STOP))
-        }
     }
 
     fun playCloudQueueItem(queue: List<SoundCloudResult>, index: Int) {
