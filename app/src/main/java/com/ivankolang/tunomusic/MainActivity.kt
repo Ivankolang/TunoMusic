@@ -76,8 +76,6 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -321,9 +319,9 @@ data class RadioStation(
 
 private suspend fun searchRadioBrowser(query: String, countryFilter: String): List<RadioStation> = withContext(Dispatchers.IO) {
     val base = "https://de1.api.radio-browser.info/json/"
-    val endpoint = if (query.isBlank()) "stations/topvote/100" else {
+    val endpoint = if (query.isBlank() && countryFilter != "Беларусь") "stations/topvote/100" else {
         val params = buildList {
-            add("name=" + URLEncoder.encode(query.trim(), "UTF-8"))
+            if (query.isNotBlank()) add("name=" + URLEncoder.encode(query.trim(), "UTF-8"))
             add("limit=100")
             add("hidebroken=true")
             add("order=clickcount")
