@@ -1878,6 +1878,34 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 }
 
 @Composable
+private fun TunoVisualizer(isPlaying: Boolean) {
+    val transition = rememberInfiniteTransition(label = "tuno_visualizer")
+    Row(
+        Modifier.width(92.dp).height(34.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(12) { index ->
+            val animatedHeight by transition.animateFloat(
+                initialValue = if (isPlaying) 0.18f + (index % 3) * 0.06f else 0.16f,
+                targetValue = if (isPlaying) 0.35f + ((index * 7) % 10) * 0.065f else 0.16f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(320 + index * 38, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "visualizer_bar_$index"
+            )
+            Box(
+                Modifier.weight(1f)
+                    .height((5f + animatedHeight * 27f).dp)
+                    .clip(CircleShape)
+                    .background(Green.copy(alpha = if (isPlaying) 0.95f else 0.48f))
+            )
+        }
+    }
+}
+
+@Composable
 private fun CloudMiniPlayer(track: SoundCloudResult, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).background(Color(0xFF17251D), RoundedCornerShape(17.dp)).clickable(onClick = onOpen).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         CoverThumb(track.artwork, 44)
