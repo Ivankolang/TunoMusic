@@ -1654,9 +1654,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     onQueryConsumed = { sefonPendingQuery = "" }
                                 )
                             }
-                            AndroidView(
-                                modifier = Modifier.fillMaxSize()
-                                    .clip(RoundedCornerShape(20.dp))
+                            if (service != "Sefon.org") {
+                                AndroidView(
+                                    modifier = Modifier.fillMaxSize()
+                                        .clip(RoundedCornerShape(20.dp))
                                     .background(Night)
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
                                     .alpha(if (service != "Sefon.org" && (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed))) 1f else 0f),
@@ -1924,7 +1925,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         }
                                     }
                                 }
-                            )
+                                )
+                            }
                             if (soundCloudEmbed) {
                                 Row(
                                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
