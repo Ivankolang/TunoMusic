@@ -30,7 +30,6 @@ internal fun SefonWebView(
     onQueryConsumed: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val latestQuery by rememberUpdatedState(query)
     val latestConsumed by rememberUpdatedState(onQueryConsumed)
     var pageReady by remember { mutableStateOf(false) }
 
@@ -76,8 +75,6 @@ internal fun SefonWebView(
                               hideAds();if(window.__tunoSefonObserver)window.__tunoSefonObserver.disconnect();window.__tunoSefonObserver=new MutationObserver(hideAds);window.__tunoSefonObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','id','src']});
                             })();
                         """.trimIndent(), null)
-                        val pending = latestQuery.trim()
-                        if (pending.isNotEmpty()) submitSefonSearch(view, pending, latestConsumed)
                     }
                 }
                 loadUrl("https://sefon.org/")
