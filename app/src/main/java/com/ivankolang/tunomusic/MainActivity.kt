@@ -389,7 +389,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var serviceUrl by rememberSaveable { mutableStateOf("") }
     var soundCloudEmbed by rememberSaveable { mutableStateOf(false) }
     var soundCloudResults by remember { mutableStateOf(emptyList<SoundCloudResult>()) }
-    var catalogMode by rememberSaveable { mutableStateOf(true) }
+    var searchIdle by rememberSaveable { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
     var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
@@ -550,7 +550,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         }
     }
 
-    fun startCatalogSearch(rawQuery: String) {
+    fun startSoundCloudSearch(rawQuery: String) {
         val cleanQuery = rawQuery.trim()
         if (cleanQuery.isBlank() || offlineMode) return
         query = cleanQuery
@@ -589,7 +589,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             fullPlayer -> fullPlayer = false
             tab == 2 && soundCloudEmbed -> {
                 soundCloudEmbed = false
-                serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8")
+                serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8") + "&t=" + System.currentTimeMillis()
             }
             tab == 2 && !catalogMode -> {
                 soundCloudEmbed = false
@@ -899,7 +899,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         )
                     )
                     Spacer(Modifier.height(12.dp))
-                    if ((query.isBlank() || searchFocused) && !catalogLoading && !soundCloudEmbed) {
+                    if ((query.isBlank() || searchFocused) && !soundCloudEmbed) {
                         if (searchFocused && searchHistory.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("История поиска", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
@@ -1152,7 +1152,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         (function() {
                                                           if (window.__tunoObserver) window.__tunoObserver.disconnect();
                                                           if (window.__tunoPoll) clearInterval(window.__tunoPoll);
-                                                          var seen = window.__tunoSeen || (window.__tunoSeen = Object.create(null));
+                                                          var seen = (window.__tunoSeen = Object.create(null));
                                                           var timer = null;
                                                           function textOf(node) {
                                                             return node ? (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim() : "";
