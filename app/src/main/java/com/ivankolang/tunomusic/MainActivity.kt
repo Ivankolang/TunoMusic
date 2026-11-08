@@ -1529,6 +1529,35 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             audiusResults.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Введи запрос, чтобы найти музыку в Audius", color = Muted) }
                             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
+                                if (currentAudiusTrack != null) {
+                                    item(key = "audius-inline-player") {
+                                        AudiusPlayerCard(
+                                            track = currentAudiusTrack!!,
+                                            playing = playing,
+                                            position = position,
+                                            duration = duration,
+                                            downloading = audiusDownloading,
+                                            onPlayPause = {
+                                                controllerProvider()?.let { player ->
+                                                    if (player.isPlaying || player.playWhenReady) player.pause() else player.play()
+                                                }
+                                            },
+                                            onSeek = { value -> controllerProvider()?.seekTo((value * 1000f).toLong()) },
+                                            onDownload = {
+                                                val selected = currentAudiusTrack!!
+                                                if (selected.isDownloadable && !audiusDownloading) scope.launch {
+                                                    audiusDownloading = true
+                                                    val saved = downloadAudiusTrack(context, selected)
+                                                    if (saved) {
+                                                        tracks = loadTracks()
+                                                        Toast.makeText(context, "Трек сохранён офлайн", Toast.LENGTH_SHORT).show()
+                                                    } else Toast.makeText(context, "Не удалось скачать трек", Toast.LENGTH_SHORT).show()
+                                                    audiusDownloading = false
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                                 items(audiusResults, key = { "audius-" + it.id }) { track ->
                                     Row(Modifier.fillMaxWidth().clickable { playAudiusTrack(track) }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         CoverThumb(track.artwork, 52)
@@ -2480,6 +2509,66 @@ private fun TunoVisualizer(isPlaying: Boolean) {
                     .clip(CircleShape)
                     .background(Green.copy(alpha = if (isPlaying) 0.95f else 0.48f))
             )
+        }
+    }
+}
+
+@Composable
+private fun AudiusPlayerCard(
+    track: AudiusTrack,
+    playing: Boolean,
+    position: Float,
+    duration: Float,
+    downloading: Boolean,
+    onPlayPause: () -> Unit,
+    onSeek: (Float) -> Unit,
+    onDownload: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF244832), Color(0xFF142019))))
+            .border(1.dp, Green.copy(alpha = 0.28f), RoundedCornerShape(22.dp))
+            .padding(16.dp)
+    ) {
+        Text("СЕЙЧАС ИГРАЕТ · AUDIUS", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CoverThumb(track.artwork, 76)
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(track.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(track.artist, color = Muted, fontSize = 12.sp, maxLines = 1)
+            }
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(52.dp).background(Green, CircleShape)) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Night, modifier = Modifier.size(30.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Slider(
+            value = if (duration > 0f) position.coerceIn(0f, duration) else 0f,
+            onValueChange = onSeek,
+            valueRange = 0f..duration.coerceAtLeast(1f),
+            colors = SliderDefaults.colors(thumbColor = Green, activeTrackColor = Green, inactiveTrackColor = Color.White.copy(alpha = 0.22f))
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(position), color = Muted, fontSize = 11.sp)
+            Text(formatTime(duration), color = Muted, fontSize = 11.sp)
+        }
+        if (track.isDownloadable) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onDownload, enabled = !downloading, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Green),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Green.copy(alpha = 0.6f))) {
+                if (downloading) CircularProgressIndicator(Modifier.size(17.dp), color = Green, strokeWidth = 2.dp)
+                else Icon(Icons.Default.Download, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (downloading) "Скачивание…" else "Скачать")
+            }
+        } else {
+            Text("Скачивание недоступно: автор не разрешил загрузку", color = Muted, fontSize = 11.sp,
+                modifier = Modifier.padding(top = 10.dp))
         }
     }
 }
