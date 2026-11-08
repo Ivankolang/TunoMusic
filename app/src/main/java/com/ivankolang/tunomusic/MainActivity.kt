@@ -317,6 +317,28 @@ data class RadioStation(
     val website: String
 )
 
+data class RadioFilter(val name: String, val country: String, val genre: String)
+
+private fun readRadioFilters(context: Context): List<RadioFilter> {
+    val raw = context.getSharedPreferences("tuno_radio", Context.MODE_PRIVATE).getString("custom_filters", "[]") ?: "[]"
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val name = item.optString("name").trim()
+                if (name.isNotBlank()) add(RadioFilter(name, item.optString("country", "Все"), item.optString("genre")))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun saveRadioFilters(context: Context, filters: List<RadioFilter>) {
+    val array = JSONArray()
+    filters.forEach { array.put(JSONObject().put("name", it.name).put("country", it.country).put("genre", it.genre)) }
+    context.getSharedPreferences("tuno_radio", Context.MODE_PRIVATE).edit().putString("custom_filters", array.toString()).apply()
+}
+
 private suspend fun searchRadioBrowser(query: String, countryFilter: String): List<RadioStation> = withContext(Dispatchers.IO) {
     val base = "https://de1.api.radio-browser.info/json/"
     val endpoint = if (query.isBlank() && countryFilter != "Беларусь") "stations/topvote/100" else {
@@ -499,11 +521,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var smartDjEnabled by rememberSaveable { mutableStateOf(true) }
     var djFadeRunning by remember { mutableStateOf(false) }
     var radioSelectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    val radioSelected = tunoRadioStations.firstOrNull { it.id == radioSelectedId }
+    var radioNowPlaying by remember { mutableStateOf<RadioStation?>(null) }
     var radioError by remember { mutableStateOf<String?>(null) }
     var radioQuery by rememberSaveable { mutableStateOf("") }
     var radioCountry by rememberSaveable { mutableStateOf("Все") }
     var onlineRadioStations by remember { mutableStateOf(emptyList<RadioStation>()) }
+    val radioSelected = radioNowPlaying ?: (tunoRadioStations + onlineRadioStations).firstOrNull { it.id == radioSelectedId }
+    var radioFilters by remember { mutableStateOf(readRadioFilters(context)) }
+    var selectedRadioFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var showRadioFilterDialog by remember { mutableStateOf(false) }
+    var radioFilterName by remember { mutableStateOf("") }
+    var radioFilterCountry by remember { mutableStateOf("Все") }
+    var radioFilterGenre by remember { mutableStateOf("") }
     var radioSearchLoading by remember { mutableStateOf(false) }
     var radioSearchError by remember { mutableStateOf<String?>(null) }
     var radioFavorites by remember {
@@ -566,6 +595,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         playbackQueue = emptyList()
         selectedTrack = null
         radioSelectedId = station.id
+        radioNowPlaying = station
         radioError = null
         val metadata = MediaMetadata.Builder()
             .setTitle(station.name)
@@ -1703,7 +1733,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
                             value = radioQuery,
-                            onValueChange = { radioQuery = it },
+                            onValueChange = { radioQuery = it; selectedRadioFilter = null },
                             modifier = Modifier.fillMaxWidth().height(54.dp),
                             singleLine = true,
                             placeholder = { Text("Найти радиостанцию", color = Muted) },
@@ -1716,14 +1746,31 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             )
                         )
                         Spacer(Modifier.height(9.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
-                            listOf("Все", "Беларусь", "Мир", "Избранное").forEach { category ->
-                                FilterChip(
-                                    selected = radioCountry == category,
-                                    onClick = { radioCountry = category },
-                                    label = { Text(category, fontSize = 11.sp) }
-                                )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
+                            items(listOf("Все", "Беларусь", "Мир", "Избранное")) { category ->
+                                FilterChip(selected = selectedRadioFilter == null && radioCountry == category,
+                                    onClick = { radioCountry = category; selectedRadioFilter = null },
+                                    label = { Text(category, fontSize = 11.sp) })
                             }
+                            items(radioFilters, key = { "filter_" + it.name }) { filter ->
+                                FilterChip(selected = selectedRadioFilter == filter.name,
+                                    onClick = { selectedRadioFilter = filter.name },
+                                    label = { Text(filter.name, fontSize = 11.sp) },
+                                    trailingIcon = {
+                                        IconButton(onClick = {
+                                            radioFilters = radioFilters.filterNot { it.name == filter.name }
+                                            saveRadioFilters(context, radioFilters)
+                                            if (selectedRadioFilter == filter.name) selectedRadioFilter = null
+                                        }, modifier = Modifier.size(20.dp)) {
+                                            Icon(Icons.Default.Close, "Удалить фильтр", tint = Muted, modifier = Modifier.size(13.dp))
+                                        }
+                                    })
+                            }
+                            item { AssistChip(onClick = {
+                                radioFilterName = ""; radioFilterCountry = "Все"; radioFilterGenre = ""; showRadioFilterDialog = true
+                            }, label = { Text("Добавить фильтр", fontSize = 11.sp) }, leadingIcon = {
+                                Icon(Icons.Default.Add, null, modifier = Modifier.size(15.dp))
+                            }) }
                         }
                         Spacer(Modifier.height(8.dp))
                         if (radioSelected != null) {
@@ -1741,9 +1788,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 }
                                 Spacer(Modifier.width(11.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("СЕЙЧАС ИГРАЕТ", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                                    Text(if (playing) "СЕЙЧАС ИГРАЕТ" else "РАДИО НА ПАУЗЕ", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
                                     Text(currentRadio.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(currentRadio.country + " · " + currentRadio.genre, color = Muted, fontSize = 10.sp)
+                                    Text("Текущая радиостанция", color = Muted, fontSize = 9.sp)
                                 }
                                 IconButton(onClick = {
                                     controllerProvider()?.let { player ->
@@ -1753,6 +1801,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     Icon(if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
                                         "Пауза или воспроизведение", tint = Green, modifier = Modifier.size(34.dp))
                                 }
+                                IconButton(onClick = {
+                                    controllerProvider()?.stop()
+                                    radioSelectedId = null
+                                    radioNowPlaying = null
+                                    radioError = null
+                                }) { Icon(Icons.Default.StopCircle, "Остановить радио", tint = Muted, modifier = Modifier.size(28.dp)) }
                             }
                             Spacer(Modifier.height(10.dp))
                         }
@@ -1764,8 +1818,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             )
                         }
                         val allRadioStations = (tunoRadioStations + onlineRadioStations).distinctBy { it.id }
+                        val activeCustomFilter = radioFilters.firstOrNull { it.name == selectedRadioFilter }
                         val visibleStations = allRadioStations.filter { station ->
-                            when (radioCountry) {
+                            if (activeCustomFilter != null) {
+                                (activeCustomFilter.country == "Все" || station.country.equals(activeCustomFilter.country, true)) &&
+                                    (activeCustomFilter.genre.isBlank() || station.genre.contains(activeCustomFilter.genre, true) || station.name.contains(activeCustomFilter.genre, true))
+                            } else when (radioCountry) {
                                 "Беларусь" -> station.country.equals("Беларусь", true) &&
                                     (station.name.contains(radioQuery, true) || station.genre.contains(radioQuery, true))
                                 "Мир" -> !station.country.equals("Беларусь", true) &&
@@ -1984,6 +2042,44 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             }
         }
     }
+    }
+
+    if (showRadioFilterDialog) {
+        AlertDialog(
+            onDismissRequest = { showRadioFilterDialog = false },
+            title = { Text("Новый фильтр радио") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = radioFilterName, onValueChange = { radioFilterName = it },
+                        label = { Text("Название фильтра") }, singleLine = true)
+                    Text("Страна", color = Muted, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Все", "Беларусь").forEach { country ->
+                            FilterChip(selected = radioFilterCountry == country,
+                                onClick = { radioFilterCountry = country }, label = { Text(country) })
+                        }
+                    }
+                    OutlinedTextField(value = radioFilterGenre, onValueChange = { radioFilterGenre = it },
+                        label = { Text("Жанр или слово для поиска") }, singleLine = true,
+                        placeholder = { Text("Например: рок, поп, jazz") })
+                    Text("Фильтр будет искать станции по стране и жанру в каталоге радио.", color = Muted, fontSize = 11.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = radioFilterName.trim()
+                    if (name.isNotBlank()) {
+                        val filter = RadioFilter(name, radioFilterCountry, radioFilterGenre.trim())
+                        radioFilters = radioFilters.filterNot { it.name.equals(name, true) } + filter
+                        saveRadioFilters(context, radioFilters)
+                        selectedRadioFilter = name
+                        radioCountry = "Все"
+                    }
+                    showRadioFilterDialog = false
+                }) { Text("Сохранить", color = Green) }
+            },
+            dismissButton = { TextButton(onClick = { showRadioFilterDialog = false }) { Text("Отмена") } }
+        )
     }
 
     if (showCreatePlaylist) {
