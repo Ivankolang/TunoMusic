@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -590,6 +591,7 @@ class MainActivity : ComponentActivity() {
 private fun TunoScreen(context: Context, controllerProvider: () -> MediaController?, loadTracks: () -> List<AudioTrack>) {
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
     var tab by rememberSaveable { mutableIntStateOf(2) }
+    var homeSearchOpen by rememberSaveable { mutableStateOf(false) }
     var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
@@ -969,9 +971,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         coverTarget = null
     }
 
-    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && (soundCloudEmbed || !searchIdle))) {
+    BackHandler(enabled = fullPlayer || activePlaylistId != null || (tab == 2 && (homeSearchOpen || soundCloudEmbed || !searchIdle))) {
         when {
             fullPlayer -> fullPlayer = false
+            tab == 2 && homeSearchOpen && !soundCloudEmbed -> { homeSearchOpen = false; searchIdle = true; serviceUrl = ""; soundCloudResults = emptyList() }
             tab == 2 && soundCloudEmbed -> {
                 soundCloudEmbed = false
                 serviceUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(query.trim(), "UTF-8") + "&t=" + System.currentTimeMillis()
@@ -1326,6 +1329,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     }
                 } else if (tab == 2) {
+                    if (!homeSearchOpen) {
+                        HomeDashboard(favorites = cloudFavorites, mixes = homeMixes,
+                            onSearch = { homeSearchOpen = true; searchIdle = true; soundCloudEmbed = false; serviceUrl = "" },
+                            onPlayFavorite = { cloud -> playMixedQueueItem(listOf(PlaybackQueueItem(cloud = cloud)), 0) },
+                            onPlayMix = { queue -> playMixedQueueItem(queue, 0) })
+                    } else {
                     Row(
                         modifier = Modifier.fillMaxWidth()
                             .background(Color(0xFF111915), RoundedCornerShape(18.dp))
@@ -1654,7 +1663,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         .clip(RoundedCornerShape(20.dp))
                                     .background(Night)
                                     .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))
-                                    .alpha((soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
+                                    .alpha(if (soundCloudEmbed || (soundCloudResults.isEmpty() && soundCloudLoadFailed)) 1f else 0f),
                                 factory = { ctx ->
                                     (soundCloudWebView ?: WebView(ctx)).apply {
                                         soundCloudWebView = this
@@ -2002,6 +2011,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                         }
                     }
+                    }
                 } else if (tab == 4) {
                     Column(Modifier.fillMaxSize()) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -2310,7 +2320,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 )
             }
             NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; homeSearchOpen = false; activePlaylistId = null },
                     icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
                 NavigationBarItem(selected = tab == 0 || tab == 1 || tab == 3, onClick = { tab = 0; activePlaylistId = null },
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
@@ -2564,6 +2574,133 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             },
             dismissButton = { TextButton(onClick = { editingTrack = null }) { Text("Отмена") } }
         )
+    }
+}
+
+@Composable
+private fun HomeDashboard(
+    favorites: List<SoundCloudResult>,
+    mixes: List<Pair<String, List<PlaybackQueueItem>>>,
+    onSearch: () -> Unit,
+    onPlayFavorite: (SoundCloudResult) -> Unit,
+    onPlayMix: (List<PlaybackQueueItem>) -> Unit
+) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("TUNO MUSIC", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
+                    Text("Твоя музыка", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                IconButton(onClick = onSearch, modifier = Modifier.size(46.dp).background(Panel, CircleShape)) {
+                    Icon(Icons.Default.Search, "Поиск музыки", tint = Green, modifier = Modifier.size(24.dp))
+                }
+                Spacer(Modifier.width(7.dp))
+                Box(Modifier.size(46.dp).background(Panel, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.GraphicEq, "Tuno", tint = Green, modifier = Modifier.size(23.dp))
+                }
+            }
+        }
+        item {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF254B34), Color(0xFF14231A), Color(0xFF101512))))
+                .border(1.dp, Green.copy(alpha = 0.20f), RoundedCornerShape(24.dp))
+                .clickable { if (favorites.isNotEmpty()) onPlayFavorite(favorites.first()) else onSearch() }.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("ТВОЯ КОЛЛЕКЦИЯ", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.7.sp)
+                        Text("Избранное", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(favorites.size.toString() + " сохранённых треков", color = Color.White.copy(alpha = 0.68f), fontSize = 12.sp)
+                    }
+                    Box(Modifier.size(58.dp).background(Color(0xFF0D1711).copy(alpha = 0.75f), CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Favorite, null, tint = Green, modifier = Modifier.size(29.dp))
+                    }
+                }
+                Spacer(Modifier.height(15.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Слушать избранное", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Spacer(Modifier.weight(1f))
+                    Icon(Icons.Default.PlayArrow, null, tint = Night, modifier = Modifier.size(24.dp).background(Green, CircleShape).padding(2.dp))
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Быстрый доступ", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    Text("ИЗБРАННОЕ", color = Muted, fontSize = 9.sp, letterSpacing = 1.sp)
+                }
+                if (favorites.isEmpty()) Text("Добавляй треки в избранное — они появятся здесь.", color = Muted, fontSize = 12.sp)
+                else LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(favorites.take(8), key = { it.url }) { track ->
+                        Row(Modifier.width(236.dp).clip(RoundedCornerShape(16.dp)).background(Panel)
+                            .clickable { onPlayFavorite(track) }.padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CoverThumb(track.artwork, 58)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(track.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                Text(track.artist, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp)
+                            }
+                            Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(23.dp))
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Больше того, что тебе нравится", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                val recommendations = (favorites + mixes.flatMap { pair -> pair.second.mapNotNull { it.cloud } }).distinctBy { it.url }.take(12)
+                if (recommendations.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().height(142.dp).clip(RoundedCornerShape(18.dp)).background(Panel), contentAlignment = Alignment.Center) {
+                        Text("Найди музыку — Tuno соберёт рекомендации", color = Muted, fontSize = 12.sp)
+                    }
+                } else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(recommendations, key = { "rec-" + it.url }) { track ->
+                        Column(Modifier.width(148.dp).clickable { onPlayFavorite(track) }) {
+                            if (track.artwork != null) AsyncImage(model = track.artwork, contentDescription = null,
+                                modifier = Modifier.fillMaxWidth().height(148.dp).clip(RoundedCornerShape(16.dp)))
+                            else Box(Modifier.fillMaxWidth().height(148.dp).clip(RoundedCornerShape(16.dp)).background(Panel), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(38.dp))
+                            }
+                            Text(track.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                            Text(track.artist, color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Миксы Tuno", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    Text("ДЛЯ ТЕБЯ", color = Green, fontSize = 9.sp, letterSpacing = 1.2.sp)
+                }
+                if (mixes.isEmpty()) Text("Когда появятся прослушивания и избранное, здесь будут персональные миксы.", color = Muted, fontSize = 12.sp)
+                else mixes.forEach { (title, queue) ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFF1E3828), Panel)))
+                        .clickable { onPlayMix(queue) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val cover = queue.firstNotNullOfOrNull { it.cloud?.artwork }
+                        if (cover != null) AsyncImage(model = cover, contentDescription = null,
+                            modifier = Modifier.size(62.dp).clip(RoundedCornerShape(13.dp)))
+                        else Box(Modifier.size(62.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF294633)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(28.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(queue.size.toString() + " треков · подборка", color = Muted, fontSize = 11.sp)
+                        }
+                        Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(30.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
