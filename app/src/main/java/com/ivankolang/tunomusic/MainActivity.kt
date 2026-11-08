@@ -139,41 +139,62 @@ data class CatalogRecording(
 )
 
 private suspend fun searchMusicCatalog(query: String): List<CatalogRecording> = withContext(Dispatchers.IO) {
-    val encoded = URLEncoder.encode(query, "UTF-8")
-    val connection = (URL("https://musicbrainz.org/ws/2/recording/?query=$encoded&fmt=json&limit=25")
-        .openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 10000
-        readTimeout = 12000
-        setRequestProperty("User-Agent", "TunoMusic/0.2 (https://github.com/Ivankolang/TunoMusic)")
-        setRequestProperty("Accept", "application/json")
-    }
-    try {
-        val body = connection.inputStream.bufferedReader().use { it.readText() }
-        val recordings = JSONObject(body).optJSONArray("recordings") ?: JSONArray()
-        buildList {
-            for (i in 0 until recordings.length()) {
-                val item = recordings.optJSONObject(i) ?: continue
-                val title = item.optString("title").trim()
-                if (title.isBlank()) continue
-                val credits = item.optJSONArray("artist-credit") ?: JSONArray()
-                val artists = buildList {
-                    for (j in 0 until credits.length()) {
-                        val credit = credits.optJSONObject(j) ?: continue
-                        val artist = credit.optJSONObject("artist")?.optString("name").orEmpty()
-                        if (artist.isNotBlank()) add(artist)
-                    }
-                }.joinToString("")
-                val releases = item.optJSONArray("releases") ?: JSONArray()
-                val releaseId = releases.optJSONObject(0)?.optString("id")?.takeIf { it.isNotBlank() }
-                add(CatalogRecording(item.optString("id"), title, artists.ifBlank { "Неизвестный исполнитель" }, releaseId))
-            }
-        }
-    } finally {
-        connection.disconnect()
-    }
-}
+    val clean = query.trim().replace(Regex("\\s+"), " ")
+    if (clean.isBlank()) return@withContext emptyList()
+    val escaped = clean.replace("\\", "\\\\").replace("\"", "\\\"")
+    val searchTerms = listOf("recording:\"$escaped\"", clean).distinct()
+    val found = linkedMapOf<String, CatalogRecording>()
 
+    searchTerms.forEachIndexed { index, term ->
+        val encoded = URLEncoder.encode(term, "UTF-8")
+        val connection = (URL("https://musicbrainz.org/ws/2/recording/?query=$encoded&fmt=json&limit=50")
+            .openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10000
+            readTimeout = 15000
+            setRequestProperty("User-Agent", "TunoMusic/0.3 (https://github.com/Ivankolang/TunoMusic)")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            if (connection.responseCode in 200..299) {
+                val body = connection.inputStream.bufferedReader().use { it.readText() }
+                val recordings = JSONObject(body).optJSONArray("recordings") ?: JSONArray()
+                for (i in 0 until recordings.length()) {
+                    val item = recordings.optJSONObject(i) ?: continue
+                    val title = item.optString("title").trim()
+                    if (title.isBlank()) continue
+                    val credits = item.optJSONArray("artist-credit") ?: JSONArray()
+                    val artist = buildString {
+                        for (j in 0 until credits.length()) {
+                            val credit = credits.optJSONObject(j) ?: continue
+                            val name = credit.optJSONObject("artist")?.optString("name").orEmpty()
+                            if (name.isNotBlank()) {
+                                if (isNotEmpty()) append(' ')
+                                append(name)
+                            }
+                            append(credit.optString("joinphrase"))
+                        }
+                    }.trim()
+                    val releases = item.optJSONArray("releases") ?: JSONArray()
+                    val releaseId = releases.optJSONObject(0)?.optString("id")?.takeIf { it.isNotBlank() }
+                    val id = item.optString("id")
+                    if (id.isNotBlank()) {
+                        found.putIfAbsent(id, CatalogRecording(
+                            id, title, artist.ifBlank { "Неизвестный исполнитель" }, releaseId
+                        ))
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Try the broader query if the exact-phrase search fails.
+        } finally {
+            connection.disconnect()
+        }
+        if (index == 0 && found.size < 8 && searchTerms.size > 1) delay(1100)
+        if (found.size >= 40) return@withContext found.values.toList()
+    }
+    found.values.toList()
+}
 private fun readCloudFavorites(context: Context): List<SoundCloudResult> {
     val raw = context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).getString("favorites", "[]") ?: "[]"
     return runCatching {
