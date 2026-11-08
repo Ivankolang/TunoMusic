@@ -1212,7 +1212,30 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                if (tab == 0 || tab == 1) {
+                if (tab == 0 || tab == 1 || tab == 3) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Color(0xFF111915), RoundedCornerShape(16.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf("Треки", "Избранное", "Плейлисты").forEachIndexed { index, label ->
+                            val targetTab = when (index) { 1 -> 1; 2 -> 3; else -> 0 }
+                            val active = tab == targetTab
+                            Text(
+                                label,
+                                color = if (active) Color.White else Muted,
+                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) Color(0xFF294633) else Color.Transparent)
+                                    .clickable { tab = targetTab; activePlaylistId = null }
+                                    .padding(vertical = 10.dp),
+                                textAlign = TextAlign.Center,
+                                fontSize = 13.sp,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Поиск в медиатеке", color = Muted) },
@@ -2289,14 +2312,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
                 NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
                     icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
+                NavigationBarItem(selected = tab == 0 || tab == 1 || tab == 3, onClick = { tab = 0; activePlaylistId = null },
                     icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
-                    icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
                 NavigationBarItem(selected = tab == 4, onClick = { tab = 4; activePlaylistId = null },
                     icon = { Icon(Icons.Default.Radio, null) }, label = { Text("Радио") })
-                NavigationBarItem(selected = tab == 3, onClick = { tab = 3; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.QueueMusic, null) }, label = { Text("Плейлисты") })
             }
         }
     }
