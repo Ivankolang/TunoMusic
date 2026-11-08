@@ -748,18 +748,46 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             .setMediaId(station.id)
             .setUri(station.streamUrl)
             .setMediaMetadata(metadata)
-        // These stations expose AAC/AAC+ streams without a file extension.
-        // Explicit MIME type lets Media3 select its AAC extractor reliably.
-        when (station.codec.uppercase()) {
-            "AAC", "AAC+" -> itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
-            "MP3" -> itemBuilder.setMimeType(MimeTypes.AUDIO_MPEG)
-            "OGG", "OPUS" -> itemBuilder.setMimeType(MimeTypes.AUDIO_OGG)
-            "FLAC" -> itemBuilder.setMimeType(MimeTypes.AUDIO_FLAC)
-            else -> if (station.id == "radius_fm" || station.id == "alfa_radio" || station.id == "radio_stalica") {
-                itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+        // Radius FM uses an AAC+ stream. Do not force AUDIO_AAC here:
+        // Media3's AAC MIME hint can select the wrong framing for this live stream.
+        if (station.id != "radius_fm") {
+            when (station.codec.uppercase()) {
+                "AAC", "AAC+" -> itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+                "MP3" -> itemBuilder.setMimeType(MimeTypes.AUDIO_MPEG)
+                "OGG", "OPUS" -> itemBuilder.setMimeType(MimeTypes.AUDIO_OGG)
+                "FLAC" -> itemBuilder.setMimeType(MimeTypes.AUDIO_FLAC)
+                else -> if (station.id == "alfa_radio" || station.id == "radio_stalica") {
+                    itemBuilder.setMimeType(MimeTypes.AUDIO_AAC)
+                }
             }
         }
         val item = itemBuilder.build()
+        if (station.id == "radius_fm") {
+            var fallbackTried = false
+            val radiusFallbackListener = object : Player.Listener {
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    if (!fallbackTried) {
+                        fallbackTried = true
+                        val fallback = MediaItem.Builder()
+                            .setMediaId("radius_fm_http_fallback")
+                            .setUri("http://stream2.datacenter.by/radiusfm_main")
+                            .setMediaMetadata(metadata)
+                            .build()
+                        player.setMediaItem(fallback)
+                        player.prepare()
+                        player.play()
+                    } else {
+                        radioError = "Радиус FM сейчас не удалось подключить. Попробуй ещё раз позже."
+                        player.removeListener(this)
+                    }
+                }
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    val id = mediaItem?.mediaId
+                    if (id != station.id && id != "radius_fm_http_fallback") player.removeListener(this)
+                }
+            }
+            player.addListener(radiusFallbackListener)
+        }
         player.setMediaItem(item)
         player.prepare()
         player.play()
