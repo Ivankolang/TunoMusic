@@ -2881,6 +2881,7 @@ private fun HomeDashboard(
             )
         }
     }
+    }
 }
 
 @Composable
