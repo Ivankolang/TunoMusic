@@ -719,6 +719,26 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             else -> activePlaylistId = null
         }
     }
+    LaunchedEffect(selectedTrack, soundCloudTrack, radioSelectedId, soundCloudEmbed, playing, soundCloudPlaying) {
+        val source = when {
+            soundCloudEmbed && soundCloudTrack != null -> "cloud"
+            radioSelectedId != null || selectedTrack != null -> "media"
+            else -> "none"
+        }
+        val title = radioSelected?.name ?: soundCloudTrack?.title ?: selectedTrack?.customTitle ?: "Tuno Music"
+        val artist = when {
+            radioSelected != null -> "Tuno Radio · " + radioSelected!!.country
+            soundCloudTrack != null -> soundCloudTrack!!.artist
+            selectedTrack != null -> selectedTrack!!.originalArtist
+            else -> "Твоя музыка"
+        }
+        val artwork = soundCloudTrack?.artwork ?: selectedTrack?.cover ?: ""
+        context.getSharedPreferences("tuno_widget", Context.MODE_PRIVATE).edit()
+            .putString("source", source).putString("title", title).putString("artist", artist)
+            .putString("artwork", artwork)
+            .putBoolean("playing", if (source == "cloud") soundCloudPlaying else playing).apply()
+        TunoMusicWidgetProvider.updateAll(context)
+    }
     LaunchedEffect(Unit) {
         tracks = loadTracks()
     }
