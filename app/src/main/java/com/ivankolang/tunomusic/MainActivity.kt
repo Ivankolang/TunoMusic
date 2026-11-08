@@ -389,7 +389,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TunoScreen(context: Context, controllerProvider: () -> MediaController?, loadTracks: () -> List<AudioTrack>) {
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(2) }
     var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
     var fullPlayer by remember { mutableStateOf(false) }
     var editingTrack by remember { mutableStateOf<AudioTrack?>(null) }
