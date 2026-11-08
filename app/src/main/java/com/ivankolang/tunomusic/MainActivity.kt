@@ -78,6 +78,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.UUID
+import kotlin.random.Random
 
 private val Night = Color(0xFF080B0A)
 private val Panel = Color(0xFF151B18)
@@ -191,6 +192,27 @@ private fun saveCloudFavorites(context: Context, tracks: List<SoundCloudResult>)
     val a = JSONArray()
     tracks.forEach { t -> a.put(JSONObject().put("title", t.title).put("artist", t.artist).put("url", t.url).put("artwork", t.artwork ?: "")) }
     context.getSharedPreferences("tuno_soundcloud", Context.MODE_PRIVATE).edit().putString("favorites", a.toString()).apply()
+}
+
+private fun readSearchHistory(context: Context): List<String> {
+    val raw = context.getSharedPreferences("tuno_search", Context.MODE_PRIVATE)
+        .getString("history", "[]") ?: "[]"
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val value = array.optString(i).trim()
+                if (value.isNotBlank()) add(value)
+            }
+        }.distinctBy { it.lowercase() }.take(10)
+    }.getOrDefault(emptyList())
+}
+
+private fun saveSearchHistory(context: Context, history: List<String>) {
+    val array = JSONArray()
+    history.take(10).forEach { array.put(it) }
+    context.getSharedPreferences("tuno_search", Context.MODE_PRIVATE).edit()
+        .putString("history", array.toString()).apply()
 }
 
 private fun updateFavoriteOrder(context: Context, trackId: Long, isFavorite: Boolean) {
@@ -375,6 +397,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var trackToAddToPlaylist by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
+    var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
+    var mixSeed by rememberSaveable { mutableIntStateOf((System.currentTimeMillis() / 86400000L).toInt()) }
     var service by remember { mutableStateOf("SoundCloud") }
     var playlists by remember { mutableStateOf(readPlaylists(context)) }
     var cloudFavorites by remember { mutableStateOf(readCloudFavorites(context)) }
@@ -415,6 +439,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var duration by remember { mutableFloatStateOf(0f) }
     var coverTarget by remember { mutableStateOf<AudioTrack?>(null) }
     val controller = controllerProvider()
+    val homeMixQueue = remember(tracks, cloudFavorites, mixSeed) {
+        (tracks.map { PlaybackQueueItem(local = it) } +
+            cloudFavorites.map { PlaybackQueueItem(cloud = it) })
+            .distinctBy { it.local?.id?.toString() ?: it.cloud?.url.orEmpty() }
+            .shuffled(Random(mixSeed))
+            .take(20)
+    }
 
     fun stopSoundCloudPlayback() {
         soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
@@ -540,6 +571,32 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         } else {
             showAddTracks = false
             permissionLauncher.launch(permission)
+        }
+    }
+
+    fun startCatalogSearch(rawQuery: String) {
+        val cleanQuery = rawQuery.trim()
+        if (cleanQuery.isBlank()) return
+        query = cleanQuery
+        searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
+        saveSearchHistory(context, searchHistory)
+        soundCloudEmbed = false
+        catalogMode = true
+        catalogLoading = true
+        catalogError = false
+        catalogResults = emptyList()
+        soundCloudResults = emptyList()
+        soundCloudLoadFailed = false
+        serviceUrl = ""
+        scope.launch {
+            try {
+                catalogResults = searchMusicCatalog(cleanQuery)
+                catalogError = catalogResults.isEmpty()
+            } catch (_: Exception) {
+                catalogError = true
+            } finally {
+                catalogLoading = false
+            }
         }
     }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -685,7 +742,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Поиск музыки"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                        Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Дом"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
                     }
                     Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(34.dp))
                 }
@@ -824,32 +881,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text("Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = {
-                            val q = URLEncoder.encode(query.trim(), "UTF-8")
-                            if (q.isNotBlank()) {
-                                // Switch the visible SoundCloud area back to catalog mode.
-                                // If a widget was active, do not let its embed flag make the
-                                // next search URL load as another player instead of a search page.
-                                soundCloudEmbed = false
-                                catalogMode = true
-                                catalogLoading = true
-                                catalogError = false
-                                catalogResults = emptyList()
-                                soundCloudResults = emptyList()
-                                soundCloudLoadFailed = false
-                                serviceUrl = ""
-                                scope.launch {
-                                    try {
-                                        catalogResults = searchMusicCatalog(query.trim())
-                                        catalogError = catalogResults.isEmpty()
-                                    } catch (_: Exception) {
-                                        catalogError = true
-                                    } finally {
-                                        catalogLoading = false
-                                    }
-                                }
-                            }
-                        }) { Icon(Icons.Default.ArrowForward, null, tint = Green) } },
+                        trailingIcon = { IconButton(onClick = { startCatalogSearch(query) }) {
+                            Icon(Icons.Default.ArrowForward, null, tint = Green)
+                        } },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF344139),
                             focusedContainerColor = Color(0xFF111915), unfocusedContainerColor = Color(0xFF111915),
@@ -857,6 +891,87 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         )
                     )
                     Spacer(Modifier.height(12.dp))
+                    if (query.isBlank() && !catalogLoading && !soundCloudEmbed) {
+                        if (searchHistory.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("История поиска", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = {
+                                    searchHistory = emptyList()
+                                    saveSearchHistory(context, searchHistory)
+                                }) { Text("Очистить", color = Muted, fontSize = 12.sp) }
+                            }
+                            searchHistory.forEach { historyQuery ->
+                                Row(
+                                    Modifier.fillMaxWidth().clickable { startCatalogSearch(historyQuery) }
+                                        .padding(vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.History, null, tint = Muted, modifier = Modifier.size(19.dp))
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(historyQuery, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                    Icon(Icons.Default.NorthWest, null, tint = Muted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Mix для тебя", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                                Text("Автоматическая подборка из твоей музыки", color = Muted, fontSize = 11.sp)
+                            }
+                            IconButton(onClick = { mixSeed = (System.currentTimeMillis() / 1000L).toInt() }) {
+                                Icon(Icons.Default.Shuffle, "Обновить Mix", tint = Green)
+                            }
+                        }
+                        if (homeMixQueue.isEmpty()) {
+                            Text("Добавь песни в медиатеку или SoundCloud-избранное — здесь появится твой Mix.",
+                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                        } else {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                                    .background(Brush.linearGradient(listOf(Color(0xFF244B32), Color(0xFF111915))))
+                                    .clickable { playMixedQueueItem(homeMixQueue, 0) }
+                                    .padding(15.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(54.dp).clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF315C40)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.AutoAwesome, null, tint = Green, modifier = Modifier.size(30.dp))
+                                }
+                                Spacer(Modifier.width(13.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Твой ежедневный Mix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("${homeMixQueue.size} треков · перемешано автоматически", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                }
+                                Icon(Icons.Default.PlayCircleFilled, null, tint = Green, modifier = Modifier.size(34.dp))
+                            }
+                            homeMixQueue.take(4).forEachIndexed { index, item ->
+                                val local = item.local
+                                val cloud = item.cloud
+                                Row(
+                                    Modifier.fillMaxWidth().clickable { playMixedQueueItem(homeMixQueue, index) }
+                                        .padding(vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (local != null) CoverThumb(local.cover, 42)
+                                    else if (cloud?.artwork != null) AsyncImage(model = cloud.artwork, contentDescription = null,
+                                        modifier = Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
+                                    else CoverThumb(null, 42)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(local?.customTitle ?: cloud?.title.orEmpty(), color = Color.White, maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                        Text(local?.originalArtist ?: "SoundCloud · ${cloud?.artist.orEmpty()}",
+                                            color = Muted, maxLines = 1, fontSize = 11.sp)
+                                    }
+                                    Icon(Icons.Default.PlayArrow, null, tint = Green)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
                     if (catalogMode) {
                         when {
                             catalogLoading -> Column(
@@ -1407,7 +1522,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Default.Favorite, null) }, label = { Text("Избранное") })
                 NavigationBarItem(selected = tab == 2, onClick = { tab = 2; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.Search, null) }, label = { Text("Поиск") })
+                    icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
                 NavigationBarItem(selected = tab == 3, onClick = { tab = 3; activePlaylistId = null },
                     icon = { Icon(Icons.Default.QueueMusic, null) }, label = { Text("Плейлисты") })
             }
