@@ -1740,13 +1740,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         }, "TunoBridge")
                                         webViewClient = object : WebViewClient() {
                                             override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? {
-                                                val pageIsSefon = view.url?.contains("sefon.org", ignoreCase = true) == true
+                                                // shouldInterceptRequest can run on a WebView background thread.
+                                                // Do not access view.url here: WebView getters are UI-thread-only.
                                                 val host = request.url.host?.lowercase().orEmpty()
                                                 val blockedAdHosts = listOf("doubleclick.net", "googlesyndication.com", "googleadservices.com",
                                                     "adservice.google.", "adsystem.com", "adnxs.com", "taboola.com", "outbrain.com",
                                                     "popads.net", "popcash.net", "propellerads.com")
                                                 val adHost = blockedAdHosts.any { host == it || host.endsWith(".$it") || (it.endsWith(".") && host.startsWith(it)) }
-                                                if (pageIsSefon && adHost) {
+                                                if (adHost) {
                                                     return android.webkit.WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                                                 }
                                                 return super.shouldInterceptRequest(view, request)
