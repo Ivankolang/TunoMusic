@@ -625,6 +625,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var searchIdle by rememberSaveable { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
+    var sefonPendingQuery by remember { mutableStateOf("") }
     var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
     var soundCloudPlaying by remember { mutableStateOf(false) }
     var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
@@ -884,6 +885,28 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudLoadFailed = false
         serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
     }
+    fun startSefonSearch(rawQuery: String) {
+        val cleanQuery = rawQuery.trim()
+        if (cleanQuery.isBlank() || offlineMode) return
+        query = cleanQuery
+        searchFocused = false
+        searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
+        saveSearchHistory(context, searchHistory)
+        service = "Sefon.org"
+        soundCloudEmbed = false
+        searchIdle = false
+        audiusResults = emptyList()
+        soundCloudResults = emptyList()
+        sefonPendingQuery = cleanQuery
+        val currentWeb = soundCloudWebView
+        if (currentWeb?.url?.startsWith("https://sefon.org") == true) {
+            val js = "(function(){var q=" + JSONObject.quote(cleanQuery) + ";var a=[].slice.call(document.querySelectorAll('input'));var el=a.find(function(x){return x.type==='search'||/поиск|песня|исполнитель/i.test((x.placeholder||'')+(x.name||''));})||a.find(function(x){return x.type==='text';});if(el){el.value=q;var f=el.form;if(f){if(f.requestSubmit)f.requestSubmit();else f.submit();}else{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}}})();"
+            currentWeb.evaluateJavascript(js, null)
+        } else {
+            serviceUrl = "https://sefon.org/"
+        }
+    }
+
     fun startAudiusSearch(rawQuery: String) {
         val cleanQuery = rawQuery.trim()
         if (cleanQuery.isBlank() || offlineMode) return
@@ -1347,7 +1370,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = { if (service == "Audius") startAudiusSearch(query) else startSoundCloudSearch(query) }) {
+                        trailingIcon = { IconButton(onClick = { when (service) { "Audius" -> startAudiusSearch(query); "Sefon.org" -> startSefonSearch(query); else -> startSoundCloudSearch(query) } }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
                         } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1359,7 +1382,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = service == "SoundCloud", onClick = { service = "SoundCloud"; searchIdle = true; soundCloudEmbed = false; serviceUrl = ""; audiusResults = emptyList() }, label = { Text("SoundCloud") })
-                        FilterChip(selected = service == "Audius", onClick = { service = "Audius"; searchIdle = true; soundCloudEmbed = false; serviceUrl = ""; soundCloudResults = emptyList() }, label = { Text("Audius") })
+                        FilterChip(selected = service == "Sefon.org", onClick = { service = "Sefon.org"; searchIdle = true; soundCloudEmbed = false; serviceUrl = "https://sefon.org/"; sefonPendingQuery = ""; audiusResults = emptyList(); soundCloudResults = emptyList() }, label = { Text("Sefon.org") })
                     }
                     if (service == "SoundCloud") {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1730,6 +1753,21 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 
                                             override fun onPageFinished(view: WebView, url: String) {
                                                 super.onPageFinished(view, url)
+                                                if (url.contains("sefon.org")) {
+                                                    view.evaluateJavascript("""
+                                                        (function(){
+                                                          var style=document.getElementById('tuno-sefon-style');
+                                                          if(!style){style=document.createElement('style');style.id='tuno-sefon-style';document.head.appendChild(style);}
+                                                          style.textContent='html,body{background:#080b0a!important;color:#f4fff7!important;font-family:Arial,sans-serif!important}body{padding:10px!important}header,nav,footer{background:#101914!important;color:#f4fff7!important}a{color:#9be7b1!important}article,section,.item,.track,.song,.card,[class*=track],[class*=song],[class*=music]{background:#151b18!important;color:#f4fff7!important;border-color:#2c4936!important;border-radius:14px!important}input,button{background:#111915!important;color:#fff!important;border:1px solid #385440!important;border-radius:12px!important;padding:10px!important}img{border-radius:10px!important}a[href*=download],a[download],button[class*=download]{display:none!important}';
+                                                        })();
+                                                    """.trimIndent(), null)
+                                                    val pending = sefonPendingQuery
+                                                    if (pending.isNotBlank()) {
+                                                        sefonPendingQuery = ""
+                                                        val js = "(function(){var q=" + JSONObject.quote(pending) + ";var a=[].slice.call(document.querySelectorAll('input'));var el=a.find(function(x){return x.type==='search'||/поиск|песня|исполнитель/i.test((x.placeholder||'')+(x.name||''));})||a.find(function(x){return x.type==='text';});if(el){el.value=q;var f=el.form;if(f){if(f.requestSubmit)f.requestSubmit();else f.submit();}else{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}}})();"
+                                                        view.evaluateJavascript(js, null)
+                                                    }
+                                                }
                                                 if (url.contains("soundcloud.com/search")) {
                                                     val script = """
                                                         (function() {
