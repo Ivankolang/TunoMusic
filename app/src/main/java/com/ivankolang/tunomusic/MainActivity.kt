@@ -421,6 +421,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        val offlineFolder = File(filesDir, "offline_music")
+        offlineFolder.listFiles()?.filter { it.isFile && it.length() > 0L }?.forEach { file ->
+            val id = -((file.name.hashCode().toLong() and 0x7fffffffL).coerceAtLeast(1L))
+            val title = file.nameWithoutExtension.substringBeforeLast('_').ifBlank { file.nameWithoutExtension }
+            if (id.toString() !in hiddenIds) {
+                result += AudioTrack(id, title, "Офлайн-файл", Uri.fromFile(file),
+                    prefs.getString("title_" + id, title) ?: title, prefs.getString("cover_" + id, null),
+                    prefs.getBoolean("favorite_" + id, false))
+            }
+        }
         return result
     }
 
