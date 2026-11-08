@@ -482,6 +482,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var trackToAddToPlaylist by remember { mutableStateOf<AudioTrack?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
+    var searchProvider by rememberSaveable { mutableStateOf("SoundCloud") }
     var searchHistory by remember { mutableStateOf(readSearchHistory(context)) }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
     var searchPlaylists by rememberSaveable { mutableStateOf(false) }
@@ -763,6 +764,17 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudResults = emptyList()
         soundCloudLoadFailed = false
         serviceUrl = "https://soundcloud.com/search/" + (if (searchPlaylists) "sets" else "sounds") + "?q=" + URLEncoder.encode(cleanQuery, "UTF-8")
+    }
+    fun startSpotifySearch(rawQuery: String) {
+        val cleanQuery = rawQuery.trim()
+        if (cleanQuery.isBlank() || offlineMode) return
+        query = cleanQuery
+        searchFocused = false
+        searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
+        saveSearchHistory(context, searchHistory)
+        val url = "https://open.spotify.com/search/" + URLEncoder.encode(cleanQuery, "UTF-8")
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            .onFailure { android.widget.Toast.makeText(context, "Не удалось открыть Spotify", android.widget.Toast.LENGTH_SHORT).show() }
     }
     fun startTunoRadio() {
         if (offlineMode) return
@@ -1145,9 +1157,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("SOUNDCLOUD", color = Muted, fontSize = 9.sp,
+                            Text(searchProvider.uppercase(), color = Muted, fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
-                            Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск SoundCloud",
+                            Text(if (soundCloudEmbed) "Плеер Tuno" else "Поиск музыки",
                                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                         Surface(color = Color(0xFF20372A), shape = RoundedCornerShape(50)) {
@@ -1164,7 +1176,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = { startSoundCloudSearch(query) }) {
+                        trailingIcon = { IconButton(onClick = { if (searchProvider == "Spotify") startSpotifySearch(query) else startSoundCloudSearch(query) }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
                         } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1175,8 +1187,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = !searchPlaylists, onClick = { searchPlaylists = false }, label = { Text("Треки") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
-                        FilterChip(selected = searchPlaylists, onClick = { searchPlaylists = true }, label = { Text("Плейлисты пользователей") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) })
+                        FilterChip(selected = searchProvider == "SoundCloud", onClick = { searchProvider = "SoundCloud" }, label = { Text("SoundCloud") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) })
+                        FilterChip(selected = searchProvider == "Spotify", onClick = { searchProvider = "Spotify" }, label = { Text("Spotify") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
+                    }
+                    if (searchProvider == "SoundCloud") {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = !searchPlaylists, onClick = { searchPlaylists = false }, label = { Text("Треки") })
+                            FilterChip(selected = searchPlaylists, onClick = { searchPlaylists = true }, label = { Text("Плейлисты") })
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     if ((query.isBlank() || searchFocused) && !soundCloudEmbed) {
@@ -1191,7 +1209,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             searchHistory.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.forEach { historyQuery ->
                                 Row(
-                                    Modifier.fillMaxWidth().clickable { startSoundCloudSearch(historyQuery) }
+                                    Modifier.fillMaxWidth().clickable { if (searchProvider == "Spotify") startSpotifySearch(historyQuery) else startSoundCloudSearch(historyQuery) }
                                         .padding(vertical = 5.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1368,7 +1386,16 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         Spacer(Modifier.height(14.dp))
                         }
                     }
-                    if (searchIdle && !offlineMode) {
+                    if (searchProvider == "Spotify" && !offlineMode) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(54.dp))
+                            Text("Поиск Spotify", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Введи запрос и нажми стрелку — откроются результаты Spotify", color = Muted, fontSize = 12.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = { startSpotifySearch(query) }, enabled = query.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C40))) { Text("Искать в Spotify") }
+                        }
+                    } else if (searchIdle && !offlineMode) {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Default.TravelExplore, null, tint = Green, modifier = Modifier.size(54.dp))
