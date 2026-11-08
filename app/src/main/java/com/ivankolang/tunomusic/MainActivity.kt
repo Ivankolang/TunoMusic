@@ -86,6 +86,7 @@ import java.net.URLEncoder
 import java.net.HttpURLConnection
 import java.net.URL
 import java.io.File
+import java.io.ByteArrayInputStream
 import java.io.FileOutputStream
 import java.util.UUID
 import kotlin.random.Random
@@ -873,6 +874,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 
     fun startSoundCloudSearch(rawQuery: String) {
         service = "SoundCloud"
+        sefonPendingQuery = ""
         val cleanQuery = rawQuery.trim()
         if (cleanQuery.isBlank() || offlineMode) return
         query = cleanQuery
@@ -893,6 +895,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         searchHistory = (listOf(cleanQuery) + searchHistory.filterNot { it.equals(cleanQuery, ignoreCase = true) }).take(10)
         saveSearchHistory(context, searchHistory)
         service = "Sefon.org"
+        soundCloudLoadFailed = false
+        audiusLoading = false
+        audiusError = null
         soundCloudEmbed = false
         searchIdle = false
         audiusResults = emptyList()
@@ -1403,7 +1408,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             searchHistory.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.forEach { historyQuery ->
                                 Row(
-                                    Modifier.fillMaxWidth().clickable { startSoundCloudSearch(historyQuery) }
+                                    Modifier.fillMaxWidth().clickable { when (service) { "Sefon.org" -> startSefonSearch(historyQuery); "Audius" -> startAudiusSearch(historyQuery); else -> startSoundCloudSearch(historyQuery) } }
                                         .padding(vertical = 5.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1734,6 +1739,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                             }
                                         }, "TunoBridge")
                                         webViewClient = object : WebViewClient() {
+                                            override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? {
+                                                val pageIsSefon = view.url?.contains("sefon.org", ignoreCase = true) == true
+                                                val host = request.url.host?.lowercase().orEmpty()
+                                                val blockedAdHosts = listOf("doubleclick.net", "googlesyndication.com", "googleadservices.com",
+                                                    "adservice.google.", "adsystem.com", "adnxs.com", "taboola.com", "outbrain.com",
+                                                    "popads.net", "popcash.net", "propellerads.com")
+                                                val adHost = blockedAdHosts.any { host == it || host.endsWith(".$it") || (it.endsWith(".") && host.startsWith(it)) }
+                                                if (pageIsSefon && adHost) {
+                                                    return android.webkit.WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                                                }
+                                                return super.shouldInterceptRequest(view, request)
+                                            }
+
                                             override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
                                                 val uri = request.url
                                                 val host = uri.host?.lowercase().orEmpty()
@@ -1756,9 +1774,25 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 if (url.contains("sefon.org")) {
                                                     view.evaluateJavascript("""
                                                         (function(){
+                                                          var css = "html,body{margin:0!important;min-height:100%!important;background:#080b0a!important;color:#f4fff7!important;font-family:Arial,sans-serif!important}body{padding:12px!important;max-width:100%!important;overflow-x:hidden!important}*{box-sizing:border-box!important}body,main,#page,.page,.container,.content{background-color:#080b0a!important;color:#f4fff7!important}header,nav,footer,.header,.navbar,.top-menu{background:#101914!important;color:#f4fff7!important;border-color:#26382c!important}h1,h2,h3,h4,strong,b{color:#f4fff7!important}p,small,.muted{color:#a9b8ae!important}a{color:#9be7b1!important;text-decoration:none!important}article,section,li,.item,.track,.song,.card,.music-item,[class*=track],[class*=song],[class*=music],[class*=album]{background:#151b18!important;color:#f4fff7!important;border:1px solid #2c4936!important;border-radius:15px!important}article,li,.track,.song,.music-item{padding:10px!important;margin:7px 0!important}input,select,textarea{max-width:100%!important;background:#111915!important;color:#fff!important;border:1px solid #385440!important;border-radius:13px!important;padding:11px 13px!important;outline:none!important}button,input[type=submit]{background:#244b32!important;color:#f4fff7!important;border:1px solid #477653!important;border-radius:13px!important;padding:10px 15px!important}img{max-width:100%!important;border-radius:11px!important}audio{width:100%!important;accent-color:#9be7b1!important}a[href*=download],a[download],button[class*=download],[class*=download-button]{display:none!important}[class*=advert],[id*=advert],[class*=ad-banner],[id*=ad-banner],[class*=adsbygoogle],.adsbygoogle,[data-ad],[data-ad-slot],[class^=ads-],[id^=ads-],[class*=sponsor],[id*=sponsor],[class*=promo-banner],[id*=promo-banner],iframe[src*=doubleclick],iframe[src*=googlesyndication],iframe[src*=googleadservices],iframe[src*=taboola],iframe[src*=outbrain]{display:none!important;visibility:hidden!important;height:0!important;max-height:0!important;pointer-events:none!important}@media(max-width:600px){body{padding:9px!important}h1{font-size:22px!important}article,li,.track,.song{margin:6px 0!important}}";
                                                           var style=document.getElementById('tuno-sefon-style');
                                                           if(!style){style=document.createElement('style');style.id='tuno-sefon-style';document.head.appendChild(style);}
-                                                          style.textContent='html,body{background:#080b0a!important;color:#f4fff7!important;font-family:Arial,sans-serif!important}body{padding:10px!important}header,nav,footer{background:#101914!important;color:#f4fff7!important}a{color:#9be7b1!important}article,section,.item,.track,.song,.card,[class*=track],[class*=song],[class*=music]{background:#151b18!important;color:#f4fff7!important;border-color:#2c4936!important;border-radius:14px!important}input,button{background:#111915!important;color:#fff!important;border:1px solid #385440!important;border-radius:12px!important;padding:10px!important}img{border-radius:10px!important}a[href*=download],a[download],button[class*=download]{display:none!important}';
+                                                          style.textContent=css;
+                                                          function hideAds(){
+                                                            var nodes=document.querySelectorAll('[id],[class],[data-ad],iframe');
+                                                            nodes.forEach(function(el){
+                                                              var id=(el.id||'').toLowerCase(), cl=(typeof el.className==='string'?el.className:'').toLowerCase();
+                                                              var src=(el.getAttribute('src')||'').toLowerCase();
+                                                              var marker=id+' '+cl+' '+src;
+                                                              if(/advert|ad-banner|adsbygoogle|(^|[ _-])ads?([_-]|$)|sponsor|taboola|outbrain|doubleclick|googlesyndication|googleadservices/.test(marker)){
+                                                                if(!el.closest('header')){el.style.setProperty('display','none','important');el.style.setProperty('visibility','hidden','important');}
+                                                              }
+                                                            });
+                                                          }
+                                                          hideAds();
+                                                          if(window.__tunoSefonAdObserver)window.__tunoSefonAdObserver.disconnect();
+                                                          window.__tunoSefonAdObserver=new MutationObserver(hideAds);
+                                                          if(document.documentElement)window.__tunoSefonAdObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','id','src']});
                                                         })();
                                                     """.trimIndent(), null)
                                                     val pending = sefonPendingQuery
@@ -1907,7 +1941,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                     }
                                 }
                             }
-                            if (!soundCloudEmbed) {
+                            if (!soundCloudEmbed && service == "SoundCloud") {
                                 if (soundCloudResults.isEmpty()) {
                                     Column(
                                         Modifier.fillMaxWidth()
