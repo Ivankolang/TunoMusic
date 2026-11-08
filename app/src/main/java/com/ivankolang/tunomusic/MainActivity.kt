@@ -74,10 +74,16 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.net.HttpURLConnection
+import java.net.URL
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -313,6 +319,47 @@ data class RadioStation(
     val website: String
 )
 
+private suspend fun searchRadioBrowser(query: String, countryFilter: String): List<RadioStation> = withContext(Dispatchers.IO) {
+    val base = "https://de1.api.radio-browser.info/json/"
+    val endpoint = if (query.isBlank()) "stations/topvote/100" else {
+        val params = buildList {
+            add("name=" + URLEncoder.encode(query.trim(), "UTF-8"))
+            add("limit=100")
+            add("hidebroken=true")
+            add("order=clickcount")
+            add("reverse=true")
+            if (countryFilter == "Беларусь") add("countrycode=BY")
+        }.joinToString("&")
+        "stations/search?$params"
+    }
+    val connection = (URL(base + endpoint).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 10000
+        readTimeout = 12000
+        setRequestProperty("User-Agent", "TunoMusic/1.0")
+        setRequestProperty("Accept", "application/json")
+    }
+    try {
+        val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val array = JSONArray(body)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val stream = item.optString("url_resolved").ifBlank { item.optString("url") }
+                val name = item.optString("name").trim()
+                if (name.isBlank() || !stream.startsWith("http")) continue
+                val country = item.optString("country").ifBlank { "Неизвестная страна" }
+                val tags = item.optString("tags").split(",").map { it.trim() }.filter { it.isNotBlank() }.take(3)
+                val genre = tags.joinToString(" · ").ifBlank { item.optString("codec").ifBlank { "Интернет-радио" } }
+                val uuid = item.optString("stationuuid").ifBlank { stream.hashCode().toString() }
+                add(RadioStation("rb_$uuid", name, country, genre, stream, item.optString("homepage")))
+            }
+        }.distinctBy { it.id }
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private val tunoRadioStations = listOf(
     RadioStation("radius_fm", "Радиус FM", "Беларусь", "Поп · хиты",
         "https://stream2.datacenter.by/radiusfm_main", "https://radiusfm.by/"),
@@ -458,10 +505,30 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var radioError by remember { mutableStateOf<String?>(null) }
     var radioQuery by rememberSaveable { mutableStateOf("") }
     var radioCountry by rememberSaveable { mutableStateOf("Все") }
+    var onlineRadioStations by remember { mutableStateOf(emptyList<RadioStation>()) }
+    var radioSearchLoading by remember { mutableStateOf(false) }
+    var radioSearchError by remember { mutableStateOf<String?>(null) }
     var radioFavorites by remember {
         mutableStateOf(context.getSharedPreferences("tuno_radio", Context.MODE_PRIVATE)
             .getStringSet("favorites", emptySet())?.toSet() ?: emptySet())
     }
+    LaunchedEffect(radioQuery, radioCountry) {
+        if (radioCountry == "Избранное") {
+            radioSearchLoading = false
+            return@LaunchedEffect
+        }
+        delay(if (radioQuery.isBlank()) 150L else 500L)
+        radioSearchLoading = true
+        radioSearchError = null
+        try {
+            onlineRadioStations = searchRadioBrowser(radioQuery, radioCountry)
+        } catch (error: Exception) {
+            radioSearchError = "Не удалось загрузить каталог. Проверь интернет и попробуй ещё раз."
+        } finally {
+            radioSearchLoading = false
+        }
+    }
+
     val latestCloudTrack by rememberUpdatedState(soundCloudTrack)
     val latestCloudPosition by rememberUpdatedState(soundCloudPosition)
     val latestCloudDuration by rememberUpdatedState(soundCloudDuration)
@@ -1698,15 +1765,30 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                             )
                         }
-                        val visibleStations = tunoRadioStations.filter { station ->
-                            val matchesCountry = when (radioCountry) {
-                                "Беларусь" -> station.country == "Беларусь"
-                                "Мир" -> station.country != "Беларусь"
+                        val allRadioStations = (tunoRadioStations + onlineRadioStations).distinctBy { it.id }
+                        val visibleStations = allRadioStations.filter { station ->
+                            when (radioCountry) {
+                                "Беларусь" -> station.country.equals("Беларусь", true) &&
+                                    (station.name.contains(radioQuery, true) || station.genre.contains(radioQuery, true))
+                                "Мир" -> !station.country.equals("Беларусь", true) &&
+                                    (station.name.contains(radioQuery, true) || station.genre.contains(radioQuery, true) ||
+                                        station.country.contains(radioQuery, true))
                                 "Избранное" -> station.id in radioFavorites
-                                else -> true
+                                else -> radioQuery.isBlank() || station.name.contains(radioQuery, true) ||
+                                    station.genre.contains(radioQuery, true) || station.country.contains(radioQuery, true)
                             }
-                            matchesCountry && (station.name.contains(radioQuery, true) ||
-                                station.genre.contains(radioQuery, true) || station.country.contains(radioQuery, true))
+                        }
+                        if (radioSearchLoading) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center) {
+                                CircularProgressIndicator(color = Green, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(9.dp))
+                                Text("Ищем станции по всему миру…", color = Muted, fontSize = 12.sp)
+                            }
+                        }
+                        if (radioSearchError != null) {
+                            Text(radioSearchError!!, color = Color(0xFFFFB49F), fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                         if (visibleStations.isEmpty()) {
                             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
