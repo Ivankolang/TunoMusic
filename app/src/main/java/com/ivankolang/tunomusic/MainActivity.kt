@@ -731,6 +731,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudQueueIndex by remember { mutableIntStateOf(0) }
     var playbackQueue by remember { mutableStateOf(emptyList<PlaybackQueueItem>()) }
     var playbackQueueIndex by remember { mutableIntStateOf(0) }
+    var shuffleEnabled by rememberSaveable { mutableStateOf(false) }
     var showQueueDialog by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showLyricsDialog by remember { mutableStateOf(false) }
@@ -984,12 +985,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
 
     fun playNextPlaybackQueueItem() {
-        if (playbackQueueIndex + 1 < playbackQueue.size) {
+        if (playbackQueue.isEmpty()) return
+        if (shuffleEnabled && playbackQueue.size > 1) {
+            val candidates = playbackQueue.indices.filter { it != playbackQueueIndex }
+            playMixedQueueItem(playbackQueue, candidates.random())
+        } else if (playbackQueueIndex + 1 < playbackQueue.size) {
             playMixedQueueItem(playbackQueue, playbackQueueIndex + 1)
-        } else if (radioMode && playbackQueue.isNotEmpty()) {
-            val nextRadioQueue = playbackQueue.shuffled()
-            playbackQueue = nextRadioQueue
-            playMixedQueueItem(nextRadioQueue, 0)
+        } else if (radioMode) {
+            playMixedQueueItem(playbackQueue, 0)
         }
     }
 
@@ -999,7 +1002,10 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
 
     fun playNextCloudTrack() {
         if (playbackQueue.isNotEmpty()) playNextPlaybackQueueItem()
-        else if (soundCloudQueueIndex + 1 < soundCloudQueue.size) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex + 1)
+        else if (shuffleEnabled && soundCloudQueue.size > 1) {
+            val candidates = soundCloudQueue.indices.filter { it != soundCloudQueueIndex }
+            playCloudQueueItem(soundCloudQueue, candidates.random())
+        } else if (soundCloudQueueIndex + 1 < soundCloudQueue.size) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex + 1)
     }
 
     fun playPreviousCloudTrack() {
@@ -1374,6 +1380,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
             onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } },
             onQueue = { showQueueDialog = true },
+            shuffleEnabled = shuffleEnabled,
+            onShuffle = { shuffleEnabled = !shuffleEnabled },
             onLyrics = { showLyricsDialog = true },
             onFavorite = {
                 val cloud = soundCloudTrack
@@ -1536,6 +1544,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         HomeDashboard(favorites = cloudFavorites, mixes = homeMixes,
                             libraryTracks = tracks, discoveryTracks = discoveryTracks, refreshKey = mixSeed,
                             onDiscoveryTracks = { discoveryTracks = it },
+                            onRefreshDiscovery = { mixSeed = (System.currentTimeMillis() / 1800000L).toInt() + 1 },
+                            onPlayDiscovery = { index ->
+                                val queue = discoveryTracks.filterNot { it.isPlaylist }.distinctBy { it.url }.map { PlaybackQueueItem(cloud = it) }
+                                if (index in queue.indices) playMixedQueueItem(queue, index)
+                            },
                             onSearch = { homeSearchOpen = true; searchIdle = true; soundCloudEmbed = false; serviceUrl = "" },
                             onPlayFavorite = { cloud -> playMixedQueueItem(listOf(PlaybackQueueItem(cloud = cloud)), 0) },
                             onPlayMix = { queue -> playMixedQueueItem(queue, 0) })
@@ -2972,13 +2985,15 @@ private fun HomeDashboard(
     discoveryTracks: List<SoundCloudResult>,
     refreshKey: Int,
     onDiscoveryTracks: (List<SoundCloudResult>) -> Unit,
+    onRefreshDiscovery: () -> Unit,
+    onPlayDiscovery: (Int) -> Unit,
     onSearch: () -> Unit,
     onPlayFavorite: (SoundCloudResult) -> Unit,
     onPlayMix: (List<PlaybackQueueItem>) -> Unit
 ) {
-    val discoveryTerms = listOf("indie pop", "electronic music", "lofi beats", "alternative rock", "dance music", "new music")
+    val discoveryTerms = listOf("new music", "indie pop", "electronic", "lofi", "alternative rock", "dance", "hip hop", "ambient")
     val discoveryQuery = discoveryTerms[kotlin.math.abs(refreshKey % discoveryTerms.size)]
-    val discoveryUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(discoveryQuery, "UTF-8")
+    val discoveryUrl = "https://soundcloud.com/search/sounds?q=" + URLEncoder.encode(discoveryQuery, "UTF-8") + "&filter.created_at=last_week"
     Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -3046,8 +3061,48 @@ private fun HomeDashboard(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Новое на SoundCloud", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Text("Свежие треки от разных авторов · за последнюю неделю", color = Muted, fontSize = 10.sp)
+                    }
+                    IconButton(onClick = onRefreshDiscovery) {
+                        Icon(Icons.Default.Refresh, "Обновить новинки", tint = Green)
+                    }
+                }
+                if (discoveryTracks.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().height(132.dp).clip(RoundedCornerShape(18.dp)).background(Panel), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(Modifier.size(22.dp), color = Green, strokeWidth = 2.dp)
+                            Spacer(Modifier.height(9.dp))
+                            Text("Загружаем новые треки SoundCloud…", color = Muted, fontSize = 11.sp)
+                        }
+                    }
+                } else {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(discoveryTracks.filterNot { it.isPlaylist }.distinctBy { it.url }.take(30), key = { "new-" + it.url }) { track ->
+                            Column(Modifier.width(148.dp).clip(RoundedCornerShape(15.dp)).clickable {
+                                val index = discoveryTracks.filterNot { it.isPlaylist }.distinctBy { it.url }.indexOfFirst { it.url == track.url }
+                                if (index >= 0) onPlayDiscovery(index)
+                            }) {
+                                if (track.artwork != null) AsyncImage(model = track.artwork, contentDescription = null,
+                                    modifier = Modifier.fillMaxWidth().height(148.dp).clip(RoundedCornerShape(15.dp)))
+                                else Box(Modifier.fillMaxWidth().height(148.dp).clip(RoundedCornerShape(15.dp)).background(Panel), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(38.dp))
+                                }
+                                Text(track.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                                Text(track.artist.ifBlank { "SoundCloud автор" }, color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Больше того, что тебе нравится", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                val recommendations = (favorites + mixes.flatMap { pair -> pair.second.mapNotNull { it.cloud } }).distinctBy { it.url }.take(12)
+                val recommendations = (discoveryTracks + favorites + mixes.flatMap { pair -> pair.second.mapNotNull { it.cloud } }).distinctBy { it.url }.take(12)
                 if (recommendations.isEmpty()) {
                     Box(Modifier.fillMaxWidth().height(142.dp).clip(RoundedCornerShape(18.dp)).background(Panel), contentAlignment = Alignment.Center) {
                         Text("Найди музыку — Tuno соберёт рекомендации", color = Muted, fontSize = 12.sp)
@@ -3274,7 +3329,8 @@ private fun FullPlayerScreen(
     cloudTrack: SoundCloudResult? = null, cloudFavorite: Boolean = false,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
-    onFavorite: () -> Unit, onQueue: () -> Unit = {}, onLyrics: () -> Unit = {}, onAddToPlaylist: () -> Unit = {},
+    onFavorite: () -> Unit, onQueue: () -> Unit = {}, onLyrics: () -> Unit = {},
+    shuffleEnabled: Boolean = false, onShuffle: () -> Unit = {}, onAddToPlaylist: () -> Unit = {},
     audiusTrack: AudiusTrack? = null, onDownload: () -> Unit = {}
 ) {
     val displayTitle = cloudTrack?.title ?: track?.customTitle ?: "Выбери трек"
@@ -3340,6 +3396,7 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Перемешивание", tint = if (shuffleEnabled) Green else Color.White.copy(alpha = 0.72f), modifier = Modifier.size(25.dp)) }
             IconButton(onClick = onFavorite) { Icon(if (displayFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (displayFavorite) Green else Color.White, modifier = Modifier.size(28.dp)) }
             IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).graphicsLayer { scaleX = if (playing) pulse else 1f; scaleY = if (playing) pulse else 1f }.background(Color.White, CircleShape)) {
