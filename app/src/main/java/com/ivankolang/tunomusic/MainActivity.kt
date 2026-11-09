@@ -2604,7 +2604,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showQueueDialog = false }) { Text("Готово", color = Green) },
+            confirmButton = { TextButton(onClick = { showQueueDialog = false }) { Text("Готово", color = Green) } },
             containerColor = Panel
         )
     }
@@ -2634,7 +2634,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showLyricsDialog = false }) { Text("Закрыть", color = Green) },
+            confirmButton = { TextButton(onClick = { showLyricsDialog = false }) { Text("Закрыть", color = Green) } },
             containerColor = Panel
         )
     }
