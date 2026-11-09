@@ -650,6 +650,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     val scope = rememberCoroutineScope()
     var soundCloudLoadFailed by remember { mutableStateOf(false) }
     var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
+    var youtubeMusicWebView by remember { mutableStateOf<WebView?>(null) }
+    var youtubeMusicUrl by rememberSaveable { mutableStateOf("https://music.youtube.com/") }
     var soundCloudPlaying by remember { mutableStateOf(false) }
     var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
     var soundCloudPosition by remember { mutableLongStateOf(0L) }
@@ -1448,7 +1450,18 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         shape = RoundedCornerShape(18.dp),
                         placeholder = { Text(if (offlineMode) "Офлайн-режим" else "Трек, исполнитель или альбом", color = Muted) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        trailingIcon = { IconButton(onClick = { if (service == "Audius") startAudiusSearch(query) else startSoundCloudSearch(query) }) {
+                        trailingIcon = { IconButton(onClick = {
+                            when (service) {
+                                "Audius" -> startAudiusSearch(query)
+                                "YouTube Music" -> {
+                                    val q = URLEncoder.encode(query.trim(), "UTF-8")
+                                    youtubeMusicUrl = if (q.isBlank()) "https://music.youtube.com/" else "https://music.youtube.com/search?q=$q"
+                                    searchIdle = false
+                                    searchFocused = false
+                                }
+                                else -> startSoundCloudSearch(query)
+                            }
+                        }) {
                             Icon(Icons.Default.ArrowForward, null, tint = Green)
                         } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1460,6 +1473,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = service == "SoundCloud", onClick = { service = "SoundCloud"; searchIdle = true; soundCloudEmbed = false; serviceUrl = ""; audiusResults = emptyList() }, label = { Text("SoundCloud") })
+                        FilterChip(selected = service == "YouTube Music", onClick = { service = "YouTube Music"; searchIdle = false; soundCloudEmbed = false; searchFocused = false; youtubeMusicUrl = "https://music.youtube.com/" }, label = { Text("YouTube Music") })
                     }
                     if (service == "SoundCloud") {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1480,7 +1494,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                             }
                             searchHistory.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.forEach { historyQuery ->
                                 Row(
-                                    Modifier.fillMaxWidth().clickable { if (service == "Audius") startAudiusSearch(historyQuery) else startSoundCloudSearch(historyQuery) }
+                                    Modifier.fillMaxWidth().clickable { if (service == "Audius") startAudiusSearch(historyQuery) else if (service == "YouTube Music") { query = historyQuery; youtubeMusicUrl = "https://music.youtube.com/search?q=" + URLEncoder.encode(historyQuery, "UTF-8"); searchIdle = false; searchFocused = false } else startSoundCloudSearch(historyQuery) }
                                         .padding(vertical = 5.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1666,6 +1680,61 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                         }
                     } else if (offlineMode) {
                         // Offline library is rendered above; no network content here.
+                    } else if (service == "YouTube Music") {
+                        Column(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Night)
+                            .border(1.dp, Color(0xFF26352C), RoundedCornerShape(20.dp))) {
+                            Row(Modifier.fillMaxWidth().background(Color(0xFF111915)).padding(horizontal = 15.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(38.dp).background(Color(0xFF20372A), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(22.dp))
+                                }
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("TUNO · MUSIC", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                                    Text("YouTube Music", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                }
+                                Surface(color = Color(0xFF20372A), shape = RoundedCornerShape(50)) {
+                                    Text("ONLINE", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Info, null, tint = Muted, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Воспроизведение работает через официальный веб-плеер YouTube Music", color = Muted, fontSize = 10.sp)
+                            }
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .clip(RoundedCornerShape(16.dp)).background(Night),
+                                factory = { ctx ->
+                                    (youtubeMusicWebView ?: WebView(ctx)).apply {
+                                        youtubeMusicWebView = this
+                                        setBackgroundColor(android.graphics.Color.rgb(8, 11, 10))
+                                        overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                                        isVerticalScrollBarEnabled = false
+                                        isHorizontalScrollBarEnabled = false
+                                        settings.javaScriptEnabled = true
+                                        settings.domStorageEnabled = true
+                                        settings.mediaPlaybackRequiresUserGesture = false
+                                        settings.loadsImagesAutomatically = true
+                                        settings.useWideViewPort = true
+                                        settings.loadWithOverviewMode = true
+                                        settings.javaScriptCanOpenWindowsAutomatically = true
+                                        settings.setSupportMultipleWindows(false)
+                                        android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                                        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                        webChromeClient = android.webkit.WebChromeClient()
+                                        webViewClient = WebViewClient()
+                                        tag = youtubeMusicUrl
+                                        loadUrl(youtubeMusicUrl)
+                                    }
+                                },
+                                update = { web ->
+                                    if (web.tag != youtubeMusicUrl) {
+                                        web.tag = youtubeMusicUrl
+                                        web.loadUrl(youtubeMusicUrl)
+                                    }
+                                }
+                            )
+                        }
                     } else if (service == "Audius") {
                         when {
                             audiusLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Green) }
