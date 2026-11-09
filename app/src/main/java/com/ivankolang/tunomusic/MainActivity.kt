@@ -820,7 +820,14 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudDuration = 0L
         soundCloudPlaying = false
         soundCloudEmbed = true
-        // Keep the current tab/screen: playback must not redirect the user to Home/Search.
+        // The SoundCloud WebView is hosted on the search/player screen. Open that
+        // host when playback is requested from Library, Favorites or Playlists.
+        tab = 2
+        homeSearchOpen = true
+        service = "SoundCloud"
+        searchIdle = false
+        searchFocused = false
+        // Keep the selected track visible in the shared SoundCloud player screen.
         val encoded = URLEncoder.encode(cloud.url, "UTF-8")
         val nextUrl = "https://w.soundcloud.com/player/?url=$encoded&color=%239BE7B1&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true"
         // Reuse the existing SoundCloud widget when possible. Reload the HTML only
