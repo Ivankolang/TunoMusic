@@ -205,6 +205,77 @@ private fun saveSearchHistory(context: Context, history: List<String>) {
         .putString("history", array.toString()).apply()
 }
 
+private fun readListeningHistory(context: Context): List<ListeningHistoryItem> {
+    val raw = context.getSharedPreferences("tuno_history", Context.MODE_PRIVATE).getString("items", "[]") ?: "[]"
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val title = item.optString("title").takeIf { it.isNotBlank() } ?: continue
+                add(ListeningHistoryItem(title, item.optString("artist"), item.optString("artwork").takeIf { it.startsWith("http") },
+                    if (item.has("localTrackId") && !item.isNull("localTrackId")) item.optLong("localTrackId") else null,
+                    item.optString("cloudUrl").takeIf { it.isNotBlank() }, item.optLong("timestamp", 0L)))
+            }
+        }.sortedByDescending { it.timestamp }.take(100)
+    }.getOrDefault(emptyList())
+}
+
+private fun saveListeningHistory(context: Context, history: List<ListeningHistoryItem>) {
+    val array = JSONArray()
+    history.take(100).forEach { item ->
+        array.put(JSONObject().put("title", item.title).put("artist", item.artist).put("artwork", item.artwork ?: "")
+            .put("localTrackId", item.localTrackId).put("cloudUrl", item.cloudUrl ?: "").put("timestamp", item.timestamp))
+    }
+    context.getSharedPreferences("tuno_history", Context.MODE_PRIVATE).edit().putString("items", array.toString()).apply()
+}
+
+private suspend fun fetchTrackLyrics(title: String, artist: String, durationSeconds: Int): List<LyricsLine> = withContext(Dispatchers.IO) {
+    if (title.isBlank() || title == "Tuno Music") return@withContext emptyList()
+    fun parseLyrics(json: JSONObject): List<LyricsLine> {
+        val synced = json.optString("syncedLyrics")
+        if (synced.isNotBlank() && synced != "null") {
+            val regex = Regex("""\[(\d{2}):(\d{2})(?:\.(\d{1,3}))?\](.*)""")
+            val parsed = synced.lines().mapNotNull { line ->
+                val match = regex.matchEntire(line.trim()) ?: return@mapNotNull null
+                val minutes = match.groupValues[1].toLongOrNull() ?: 0L
+                val seconds = match.groupValues[2].toLongOrNull() ?: 0L
+                val fraction = match.groupValues[3].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+                LyricsLine((minutes * 60L + seconds) * 1000L + fraction, match.groupValues[4].trim())
+            }.filter { it.text.isNotBlank() }.sortedBy { it.timeMs }
+            if (parsed.isNotEmpty()) return parsed
+        }
+        return json.optString("plainLyrics").lines().map { LyricsLine(-1L, it.trim()) }.filter { it.text.isNotBlank() }
+    }
+    val encodedTitle = URLEncoder.encode(title, "UTF-8")
+    val encodedArtist = URLEncoder.encode(artist, "UTF-8")
+    val candidates = listOf(
+        "https://lrclib.net/api/get?track_name=$encodedTitle&artist_name=$encodedArtist" + if (durationSeconds > 0) "&duration=$durationSeconds" else "",
+        "https://lrclib.net/api/search?track_name=$encodedTitle&artist_name=$encodedArtist"
+    )
+    for (endpoint in candidates) {
+        try {
+            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 7000; readTimeout = 7000
+                setRequestProperty("User-Agent", "TunoMusic/1.0 (Android)")
+            }
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            connection.disconnect()
+            if (endpoint.contains("/api/get")) {
+                val result = parseLyrics(JSONObject(body))
+                if (result.isNotEmpty()) return@withContext result
+            } else {
+                val results = JSONArray(body)
+                for (i in 0 until results.length()) {
+                    val result = parseLyrics(results.optJSONObject(i) ?: continue)
+                    if (result.isNotEmpty()) return@withContext result
+                }
+            }
+        } catch (_: Exception) { }
+    }
+    emptyList()
+}
+
 private fun updateFavoriteOrder(context: Context, trackId: Long, isFavorite: Boolean) {
     val prefs = context.getSharedPreferences("track_edits", Context.MODE_PRIVATE)
     val order = runCatching {
@@ -314,6 +385,8 @@ data class AudioTrack(
 )
 
 data class PlaybackQueueItem(val local: AudioTrack? = null, val cloud: SoundCloudResult? = null)
+data class ListeningHistoryItem(val title: String, val artist: String, val artwork: String?, val localTrackId: Long? = null, val cloudUrl: String? = null, val timestamp: Long = System.currentTimeMillis())
+data class LyricsLine(val timeMs: Long, val text: String)
 
 data class RadioStation(
     val id: String,
@@ -658,6 +731,13 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudQueueIndex by remember { mutableIntStateOf(0) }
     var playbackQueue by remember { mutableStateOf(emptyList<PlaybackQueueItem>()) }
     var playbackQueueIndex by remember { mutableIntStateOf(0) }
+    var showQueueDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var showLyricsDialog by remember { mutableStateOf(false) }
+    var listeningHistory by remember { mutableStateOf(readListeningHistory(context)) }
+    var lyricsLines by remember { mutableStateOf(emptyList<LyricsLine>()) }
+    var lyricsLoading by remember { mutableStateOf(false) }
+    var crossfadeSeconds by remember { mutableFloatStateOf(context.getSharedPreferences("tuno_audio", Context.MODE_PRIVATE).getFloat("crossfade_seconds", 3f)) }
     var radioMood by rememberSaveable { mutableStateOf("Ночное") }
     var radioPending by remember { mutableStateOf(false) }
     var radioMode by rememberSaveable { mutableStateOf(false) }
@@ -720,6 +800,32 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         }
         controller?.addListener(listener)
         onDispose { controller?.removeListener(listener) }
+    }
+    fun recordHistory(item: PlaybackQueueItem) {
+        val entry = when {
+            item.local != null -> ListeningHistoryItem(item.local.customTitle, item.local.originalArtist, item.local.cover, localTrackId = item.local.id)
+            item.cloud != null -> ListeningHistoryItem(item.cloud.title, item.cloud.artist, item.cloud.artwork, cloudUrl = item.cloud.url)
+            else -> return
+        }
+        listeningHistory = (listOf(entry) + listeningHistory.filterNot {
+            (entry.localTrackId != null && it.localTrackId == entry.localTrackId) ||
+                (entry.cloudUrl != null && it.cloudUrl == entry.cloudUrl)
+        }).take(100)
+        saveListeningHistory(context, listeningHistory)
+    }
+    fun addToQueue(item: PlaybackQueueItem) {
+        val current = when {
+            soundCloudEmbed && soundCloudTrack != null -> PlaybackQueueItem(cloud = soundCloudTrack)
+            selectedTrack != null -> PlaybackQueueItem(local = selectedTrack)
+            else -> null
+        }
+        val base = if (playbackQueue.isEmpty() && current != null) listOf(current) else playbackQueue
+        val exists = base.any {
+            (item.local != null && it.local?.id == item.local.id) ||
+                (item.cloud != null && it.cloud?.url == item.cloud.url)
+        }
+        if (!exists) playbackQueue = base + item
+        showQueueDialog = true
     }
     fun stopSoundCloudPlayback() {
         soundCloudWebView?.evaluateJavascript("window.tunoPause && window.tunoPause()", null)
@@ -816,6 +922,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         soundCloudQueueIndex = index
         val cloud = queue[index]
         soundCloudTrack = cloud
+        recordHistory(PlaybackQueueItem(cloud = cloud))
         soundCloudPosition = 0L
         soundCloudDuration = 0L
         soundCloudPlaying = false
@@ -861,6 +968,7 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         playbackQueueIndex = index
         val item = queue[index]
         if (item.local != null) {
+            recordHistory(item)
             stopSoundCloudPlayback()
             soundCloudEmbed = false
             selectedTrack = item.local
@@ -899,6 +1007,20 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         else if (soundCloudQueueIndex > 0) playCloudQueueItem(soundCloudQueue, soundCloudQueueIndex - 1)
     }
     val latestPlayNextCloudTrack by rememberUpdatedState { playNextCloudTrack() }
+
+    LaunchedEffect(soundCloudTrack?.url, selectedTrack?.id) {
+        val title = soundCloudTrack?.title ?: selectedTrack?.customTitle.orEmpty()
+        val artist = soundCloudTrack?.artist ?: selectedTrack?.originalArtist.orEmpty()
+        if (title.isBlank()) {
+            lyricsLines = emptyList()
+            lyricsLoading = false
+        } else {
+            lyricsLoading = true
+            lyricsLines = emptyList()
+            lyricsLines = fetchTrackLyrics(title, artist, duration.toInt())
+            lyricsLoading = false
+        }
+    }
 
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
@@ -1157,24 +1279,26 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     position = (player.currentPosition.coerceAtLeast(0L) / 1000f).coerceAtLeast(0f)
                 }
                 val currentQueueItem = playbackQueue.getOrNull(playbackQueueIndex)
-                if (smartDjEnabled && !soundCloudEmbed && !djFadeRunning && player.isPlaying &&
+                if (smartDjEnabled && crossfadeSeconds > 0f && !soundCloudEmbed && !djFadeRunning && player.isPlaying &&
                     currentQueueItem?.local != null && playbackQueueIndex + 1 < playbackQueue.size &&
-                    player.duration > 0L && player.duration - player.currentPosition in 1L..1200L) {
+                    player.duration > 0L && player.duration - player.currentPosition in 1L..(crossfadeSeconds * 1000f).toLong()) {
                     djFadeRunning = true
                     val currentId = currentQueueItem.local.id.toString()
                     val startVolume = player.volume.coerceIn(0f, 1f)
-                    repeat(6) { step ->
-                        delay(100)
+                    val fadeSteps = 10
+                    val fadeDelay = ((crossfadeSeconds * 1000f) / fadeSteps).toLong().coerceAtLeast(40L)
+                    repeat(fadeSteps) { step ->
+                        delay(fadeDelay)
                         if (player.currentMediaItem?.mediaId == currentId) {
-                            player.volume = startVolume * (1f - (step + 1) / 6f)
+                            player.volume = startVolume * (1f - (step + 1) / fadeSteps.toFloat())
                         }
                     }
                     if (player.currentMediaItem?.mediaId == currentId && playbackQueueIndex + 1 < playbackQueue.size) {
                         player.volume = 0f
                         playNextPlaybackQueueItem()
-                        repeat(8) { step ->
-                            delay(65)
-                            player.volume = ((step + 1) / 8f).coerceIn(0f, 1f)
+                        repeat(10) { step ->
+                            delay(55)
+                            player.volume = (startVolume * ((step + 1) / 10f)).coerceIn(0f, 1f)
                         }
                     } else {
                         player.volume = startVolume
@@ -1249,6 +1373,8 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
             },
             onCover = { selectedTrack?.let { coverTarget = it; coverPicker.launch(arrayOf("image/*")) } },
             onRename = { selectedTrack?.let { editingTrack = it; editTitle = it.customTitle } },
+            onQueue = { showQueueDialog = true },
+            onLyrics = { showLyricsDialog = true },
             onFavorite = {
                 val cloud = soundCloudTrack
                 if (soundCloudEmbed && cloud != null) {
@@ -1273,6 +1399,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     Column(Modifier.weight(1f)) {
                         Text("TUNO", color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                         Text(when (tab) { 0 -> "Твоя музыка"; 1 -> "Избранное"; 2 -> "Дом"; 4 -> "Радио"; else -> "Плейлисты" }, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(onClick = { showHistoryDialog = true }) {
+                        Icon(Icons.Default.History, "История прослушиваний", tint = if (listeningHistory.isNotEmpty()) Green else Muted, modifier = Modifier.size(24.dp))
                     }
                     IconButton(onClick = { offlineMode = !offlineMode }) {
                         Icon(if (offlineMode) Icons.Default.CloudOff else Icons.Default.CloudQueue,
@@ -1362,6 +1491,11 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                 leadingIcon = { Icon(Icons.Default.Edit, null) }
                                             )
                                             DropdownMenuItem(
+                                                text = { Text("Добавить в очередь") },
+                                                onClick = { menuExpanded = false; addToQueue(PlaybackQueueItem(local = track)) },
+                                                leadingIcon = { Icon(Icons.Default.QueueMusic, null) }
+                                            )
+                                            DropdownMenuItem(
                                                 text = { Text("Добавить в плейлист") },
                                                 onClick = { menuExpanded = false; trackToAddToPlaylist = track },
                                                 leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) }
@@ -1385,6 +1519,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         Column(Modifier.weight(1f)) {
                                             Text(cloud.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text("SoundCloud · ${cloud.artist}", color = Muted, fontSize = 12.sp)
+                                        }
+                                        IconButton(onClick = { addToQueue(PlaybackQueueItem(cloud = cloud)) }) {
+                                            Icon(Icons.Default.QueueMusic, "В очередь", tint = Green)
                                         }
                                         IconButton(onClick = { cloudFavorites = cloudFavorites.filterNot { it.url == cloud.url }; saveCloudFavorites(context, cloudFavorites) }) {
                                             Icon(Icons.Default.Favorite, null, tint = Green)
@@ -2418,6 +2555,127 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     }
     }
 
+    if (showQueueDialog) {
+        AlertDialog(
+            onDismissRequest = { showQueueDialog = false },
+            title = { Text("Очередь воспроизведения", color = Color.White) },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    Text("Плавный переход · ${crossfadeSeconds.toInt()} сек", color = Green, fontSize = 12.sp)
+                    Slider(value = crossfadeSeconds, onValueChange = {
+                        crossfadeSeconds = it
+                        context.getSharedPreferences("tuno_audio", Context.MODE_PRIVATE).edit().putFloat("crossfade_seconds", it).apply()
+                    }, valueRange = 0f..10f, steps = 9)
+                    Text(if (crossfadeSeconds == 0f) "Отключён" else "Затухание текущего трека перед следующим (только локальные файлы)", color = Muted, fontSize = 10.sp)
+                    Spacer(Modifier.height(8.dp))
+                    if (playbackQueue.isEmpty()) {
+                        Text("Очередь пока пуста. Добавляй треки через меню в медиатеке.", color = Muted)
+                    } else {
+                        LazyColumn(Modifier.heightIn(max = 340.dp)) {
+                            items(playbackQueue.size) { index ->
+                                val item = playbackQueue[index]
+                                val title = item.local?.customTitle ?: item.cloud?.title ?: "Неизвестный трек"
+                                val artist = item.local?.originalArtist ?: item.cloud?.artist.orEmpty()
+                                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(if (index == playbackQueueIndex) "▶ $title" else title, color = if (index == playbackQueueIndex) Green else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(artist, color = Muted, fontSize = 11.sp, maxLines = 1)
+                                    }
+                                    IconButton(onClick = {
+                                        val moved = playbackQueue.toMutableList()
+                                        if (index > 0) {
+                                            val value = moved.removeAt(index); moved.add(index - 1, value)
+                                            val current = playbackQueue.getOrNull(playbackQueueIndex)
+                                            playbackQueue = moved
+                                            playbackQueueIndex = moved.indexOf(current).coerceAtLeast(0)
+                                        }
+                                    }, enabled = index > 0) { Icon(Icons.Default.KeyboardArrowUp, "Выше", tint = if (index > 0) Green else Muted) }
+                                    IconButton(onClick = {
+                                        val moved = playbackQueue.toMutableList()
+                                        val currentIndex = playbackQueueIndex
+                                        moved.removeAt(index)
+                                        val current = playbackQueue.getOrNull(currentIndex)
+                                        playbackQueue = moved
+                                        playbackQueueIndex = if (moved.isEmpty()) 0 else moved.indexOf(current).takeIf { it >= 0 } ?: currentIndex.coerceAtMost(moved.lastIndex)
+                                    }) { Icon(Icons.Default.Close, "Убрать", tint = Muted) }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showQueueDialog = false }) { Text("Готово", color = Green) },
+            containerColor = Panel
+        )
+    }
+
+    if (showLyricsDialog) {
+        val currentMs = if (soundCloudEmbed) soundCloudPosition else (position * 1000).toLong()
+        val activeLyricIndex = lyricsLines.indexOfLast { it.timeMs >= 0L && it.timeMs <= currentMs }
+        AlertDialog(
+            onDismissRequest = { showLyricsDialog = false },
+            title = { Text("Текст песни", color = Color.White) },
+            text = {
+                when {
+                    lyricsLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp), color = Green, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Ищем текст песни…", color = Muted)
+                    }
+                    lyricsLines.isEmpty() -> Text("Текст для этой песни не найден. Попробуй позже.", color = Muted)
+                    else -> LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                        items(lyricsLines.size) { index ->
+                            val line = lyricsLines[index]
+                            Text(line.text, color = if (index == activeLyricIndex) Green else Color.White.copy(alpha = 0.78f),
+                                fontSize = if (index == activeLyricIndex) 17.sp else 14.sp,
+                                fontWeight = if (index == activeLyricIndex) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showLyricsDialog = false }) { Text("Закрыть", color = Green) },
+            containerColor = Panel
+        )
+    }
+
+    if (showHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryDialog = false },
+            title = { Text("История прослушиваний", color = Color.White) },
+            text = {
+                if (listeningHistory.isEmpty()) Text("Здесь появятся треки, которые ты слушал.", color = Muted)
+                else LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                    items(listeningHistory.size) { index ->
+                        val item = listeningHistory[index]
+                        Row(Modifier.fillMaxWidth().clickable {
+                            showHistoryDialog = false
+                            val queueItem = if (item.localTrackId != null) {
+                                tracks.firstOrNull { it.id == item.localTrackId }?.let { PlaybackQueueItem(local = it) }
+                            } else item.cloudUrl?.let { PlaybackQueueItem(cloud = SoundCloudResult(item.title, item.artist, it, item.artwork)) }
+                            if (queueItem != null) playMixedQueueItem(listOf(queueItem), 0)
+                        }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CoverThumb(item.artwork, 42)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(item.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(item.artist, color = Muted, fontSize = 11.sp, maxLines = 1)
+                            }
+                            Icon(Icons.Default.PlayArrow, null, tint = Green)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { listeningHistory = emptyList(); saveListeningHistory(context, listeningHistory) }) { Text("Очистить", color = Muted) }
+                    TextButton(onClick = { showHistoryDialog = false }) { Text("Готово", color = Green) }
+                }
+            },
+            containerColor = Panel
+        )
+    }
+
     if (showRadioFilterDialog) {
         AlertDialog(
             onDismissRequest = { showRadioFilterDialog = false },
@@ -3016,7 +3274,7 @@ private fun FullPlayerScreen(
     cloudTrack: SoundCloudResult? = null, cloudFavorite: Boolean = false,
     onBack: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit,
     onSeek: (Float) -> Unit, onCover: () -> Unit, onRename: () -> Unit,
-    onFavorite: () -> Unit, onAddToPlaylist: () -> Unit = {},
+    onFavorite: () -> Unit, onQueue: () -> Unit = {}, onLyrics: () -> Unit = {}, onAddToPlaylist: () -> Unit = {},
     audiusTrack: AudiusTrack? = null, onDownload: () -> Unit = {}
 ) {
     val displayTitle = cloudTrack?.title ?: track?.customTitle ?: "Выбери трек"
@@ -3048,6 +3306,7 @@ private fun FullPlayerScreen(
             Spacer(Modifier.weight(1f))
             Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = onQueue) { Icon(Icons.Default.QueueMusic, "Очередь", tint = Green) }
             if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
         }
         Spacer(Modifier.height(18.dp))
@@ -3090,6 +3349,13 @@ private fun FullPlayerScreen(
             if (cloudTrack != null) IconButton(onClick = onAddToPlaylist) {
                 Icon(Icons.Default.PlaylistAdd, "Добавить в плейлист", tint = Green, modifier = Modifier.size(28.dp))
             } else if (audiusTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            TextButton(onClick = onLyrics) {
+                Icon(Icons.Default.Subject, null, tint = Green)
+                Spacer(Modifier.width(6.dp))
+                Text("Текст песни", color = Green)
+            }
         }
         if (audiusTrack?.isDownloadable == true) {
             OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth(),
