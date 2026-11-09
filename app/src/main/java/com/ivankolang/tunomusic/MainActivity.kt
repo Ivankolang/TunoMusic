@@ -222,6 +222,18 @@ private class SoundCloudBridge(private val onResults: (String) -> Unit) {
     fun onResults(json: String) = onResults.invoke(json)
 }
 
+private class YoutubeMusicBridge(
+    private val onTrack: (String, String, String, Boolean, Long, Long) -> Unit,
+    private val onOpenPlayer: () -> Unit
+) {
+    @JavascriptInterface
+    fun onTrack(title: String, artist: String, artwork: String, playing: Boolean, positionMs: Double, durationMs: Double) {
+        onTrack.invoke(title, artist, artwork, playing, positionMs.toLong(), durationMs.toLong())
+    }
+    @JavascriptInterface
+    fun openPlayer() = onOpenPlayer.invoke()
+}
+
 private class SoundCloudWidgetBridge(
     private val onPlayback: (Boolean) -> Unit,
     private val onProgress: (Long, Long) -> Unit,
@@ -652,6 +664,12 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
     var soundCloudWebView by remember { mutableStateOf<WebView?>(null) }
     var youtubeMusicWebView by remember { mutableStateOf<WebView?>(null) }
     var youtubeMusicUrl by rememberSaveable { mutableStateOf("https://music.youtube.com/") }
+    var youtubeMusicTitle by remember { mutableStateOf("") }
+    var youtubeMusicArtist by remember { mutableStateOf("") }
+    var youtubeMusicArtwork by remember { mutableStateOf("") }
+    var youtubeMusicPlaying by remember { mutableStateOf(false) }
+    var youtubeMusicPosition by remember { mutableFloatStateOf(0f) }
+    var youtubeMusicDuration by remember { mutableFloatStateOf(0f) }
     var soundCloudPlaying by remember { mutableStateOf(false) }
     var soundCloudTrack by remember { mutableStateOf<SoundCloudResult?>(null) }
     var soundCloudPosition by remember { mutableLongStateOf(0L) }
@@ -1207,7 +1225,17 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
         label = "player_open_close"
     ) { showFullPlayer ->
     if (showFullPlayer) {
-        FullPlayerScreen(
+        if (service == "YouTube Music") {
+            YoutubeMusicFullPlayerScreen(
+                title = youtubeMusicTitle, artist = youtubeMusicArtist, artwork = youtubeMusicArtwork,
+                playing = youtubeMusicPlaying, position = youtubeMusicPosition, duration = youtubeMusicDuration,
+                webView = youtubeMusicWebView, onBack = { fullPlayer = false },
+                onPlayPause = { youtubeMusicWebView?.evaluateJavascript("window.tunoYtToggle && window.tunoYtToggle()", null) },
+                onPrevious = { youtubeMusicWebView?.evaluateJavascript("window.tunoYtPrevious && window.tunoYtPrevious()", null) },
+                onNext = { youtubeMusicWebView?.evaluateJavascript("window.tunoYtNext && window.tunoYtNext()", null) },
+                onSeek = { value -> youtubeMusicWebView?.evaluateJavascript("window.tunoYtSeek($value)", null) }
+            )
+        } else FullPlayerScreen(
             track = selectedTrack,
             cloudTrack = if (soundCloudEmbed) soundCloudTrack else null,
             cloudFavorite = soundCloudTrack?.let { cloud -> cloudFavorites.any { it.url == cloud.url } } == true,
@@ -1722,6 +1750,19 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
                                         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                         webChromeClient = android.webkit.WebChromeClient()
+                                        addJavascriptInterface(YoutubeMusicBridge(
+                                            onTrack = { title, artist, artwork, isPlaying, positionMs, durationMs ->
+                                                ctx.mainExecutor.execute {
+                                                    youtubeMusicTitle = title
+                                                    youtubeMusicArtist = artist
+                                                    youtubeMusicArtwork = artwork
+                                                    youtubeMusicPlaying = isPlaying
+                                                    youtubeMusicPosition = positionMs / 1000f
+                                                    youtubeMusicDuration = durationMs / 1000f
+                                                }
+                                            },
+                                            onOpenPlayer = { ctx.mainExecutor.execute { fullPlayer = true } }
+                                        ), "TunoYT")
                                         webViewClient = object : WebViewClient() {
                                             override fun onPageFinished(view: WebView, url: String) {
                                                 super.onPageFinished(view, url)
@@ -1768,6 +1809,9 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         ytmusic-menu-renderer, tp-yt-paper-dialog {
                                                           background-color: #101a13 !important;
                                                         }
+                                                        ytmusic-video-renderer, ytmusic-playlist-video-renderer {
+                                                          display: none !important;
+                                                        }
                                                       `;
                                                       if (location.pathname.indexOf('/search') === 0) {
                                                         var findSongs = function() {
@@ -1788,6 +1832,34 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                                         window.__tunoSongFilterObserver = new MutationObserver(findSongs);
                                                         if (document.body) window.__tunoSongFilterObserver.observe(document.body, {childList:true,subtree:true});
                                                       }
+                                                      window.tunoYtToggle = function() { var b=document.querySelector('ytmusic-player-bar #play-pause-button'); if(b)b.click(); };
+                                                      window.tunoYtNext = function() { var b=document.querySelector('ytmusic-player-bar #next-button'); if(b)b.click(); };
+                                                      window.tunoYtPrevious = function() { var b=document.querySelector('ytmusic-player-bar #previous-button'); if(b)b.click(); };
+                                                      window.tunoYtSeek = function(seconds) {
+                                                        var p=document.querySelector('ytmusic-player-bar #progress-bar'); if(!p)return;
+                                                        var r=p.getBoundingClientRect(), max=Number(p.getAttribute('aria-valuemax')||0);
+                                                        if(max<=0||r.width<=0)return;
+                                                        var x=r.left+r.width*Math.max(0,Math.min(1,seconds/max));
+                                                        p.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x,clientY:r.top+r.height/2}));
+                                                      };
+                                                      function readPlayer() {
+                                                        var bar=document.querySelector('ytmusic-player-bar'); if(!bar||!window.TunoYT)return;
+                                                        var t=bar.querySelector('.title'), a=bar.querySelector('.byline'), img=bar.querySelector('img');
+                                                        var b=bar.querySelector('#play-pause-button');
+                                                        var label=((b&&(b.getAttribute('aria-label')||b.getAttribute('title')))||'').toLowerCase();
+                                                        var p=bar.querySelector('#progress-bar');
+                                                        window.TunoYT.onTrack(t?t.textContent.trim():'',a?a.innerText.trim():'',img?img.src:'',label.indexOf('pause')>=0||label.indexOf('пауза')>=0,p?Number(p.getAttribute('aria-valuenow')||0)*1000:0,p?Number(p.getAttribute('aria-valuemax')||0)*1000:0);
+                                                      }
+                                                      if(!window.__tunoYtPoll)window.__tunoYtPoll=setInterval(readPlayer,700);
+                                                      if(!window.__tunoYtClickBound) {
+                                                        window.__tunoYtClickBound=true;
+                                                        document.addEventListener('click',function(e) {
+                                                          var item=e.target.closest('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
+                                                          if(!item)return;
+                                                          setTimeout(function(){readPlayer();if(window.TunoYT)window.TunoYT.openPlayer();},900);
+                                                        },true);
+                                                      }
+                                                      readPlayer();
                                                     })();
                                                 """.trimIndent()
                                                 view.evaluateJavascript(tuneUiScript, null)
@@ -3298,6 +3370,73 @@ private fun toMediaItem(track: AudioTrack) = MediaItem.Builder().setUri(track.ur
     MediaMetadata.Builder().setTitle(track.customTitle).setArtist(track.originalArtist)
         .setArtworkUri(track.cover?.let { Uri.parse(it) }).build()
 ).build()
+
+@Composable
+private fun YoutubeMusicFullPlayerScreen(
+    title: String, artist: String, artwork: String, playing: Boolean,
+    position: Float, duration: Float, webView: WebView?,
+    onBack: () -> Unit, onPlayPause: () -> Unit, onPrevious: () -> Unit,
+    onNext: () -> Unit, onSeek: (Float) -> Unit
+) {
+    var seekValue by remember(title) { mutableFloatStateOf(position) }
+    var seeking by remember { mutableStateOf(false) }
+    LaunchedEffect(position, seeking) { if (!seeking) seekValue = position }
+    Column(Modifier.fillMaxSize()
+        .background(Brush.verticalGradient(listOf(Color(0xFF1D3A28), Night, Night)))
+        .padding(horizontal = 24.dp)) {
+        Spacer(Modifier.height(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(30.dp)) }
+            Spacer(Modifier.weight(1f))
+            Text("TUNO · YOUTUBE MUSIC", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
+            Spacer(Modifier.weight(1f))
+            Icon(Icons.Default.GraphicEq, null, tint = Green, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.weight(0.45f))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth(0.86f).aspectRatio(1f).clip(RoundedCornerShape(28.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF294A34), Color(0xFF111A14))))
+                .border(1.dp, Green.copy(alpha = 0.28f), RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
+                if (artwork.startsWith("http")) AsyncImage(model = artwork, contentDescription = "Обложка",
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)))
+                else Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(90.dp))
+            }
+        }
+        Spacer(Modifier.weight(0.45f))
+        Text(title.ifBlank { "Выбери песню в каталоге" }, color = Color.White, fontSize = 23.sp,
+            fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(artist.ifBlank { "YouTube Music" }, color = Muted, fontSize = 14.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
+        Spacer(Modifier.height(18.dp))
+        Slider(value = if (duration > 0f) seekValue.coerceIn(0f, duration) else 0f,
+            onValueChange = { seekValue = it; seeking = true },
+            onValueChangeFinished = { onSeek(seekValue); seeking = false },
+            valueRange = 0f..duration.coerceAtLeast(1f),
+            colors = SliderDefaults.colors(thumbColor = Green, activeTrackColor = Green,
+                inactiveTrackColor = Color.White.copy(alpha = 0.22f)))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(if (seeking) seekValue else position), color = Muted, fontSize = 11.sp)
+            Text(formatTime(duration), color = Muted, fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onPrevious, modifier = Modifier.size(54.dp)) {
+                Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(34.dp))
+            }
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(76.dp).background(Green, CircleShape)) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Night, modifier = Modifier.size(42.dp))
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(54.dp)) {
+                Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(34.dp))
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Воспроизведение через официальный YouTube Music", color = Muted, fontSize = 10.sp,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        if (webView != null) AndroidView(factory = { webView }, modifier = Modifier.size(1.dp).alpha(0.01f), update = {})
+        Spacer(Modifier.height(16.dp))
+    }
+}
 
 private fun formatTime(seconds: Float): String {
     val total = seconds.toInt().coerceAtLeast(0)
