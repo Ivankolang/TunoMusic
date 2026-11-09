@@ -1722,7 +1722,77 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                                         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
                                         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                         webChromeClient = android.webkit.WebChromeClient()
-                                        webViewClient = WebViewClient()
+                                        webViewClient = object : WebViewClient() {
+                                            override fun onPageFinished(view: WebView, url: String) {
+                                                super.onPageFinished(view, url)
+                                                val tuneUiScript = """
+                                                    (function() {
+                                                      var styleId = 'tuno-youtube-music-theme';
+                                                      var css = document.getElementById(styleId);
+                                                      if (!css) {
+                                                        css = document.createElement('style');
+                                                        css.id = styleId;
+                                                        document.head.appendChild(css);
+                                                      }
+                                                      css.textContent = `
+                                                        :root {
+                                                          --ytmusic-brand-background-primary: #080d0a !important;
+                                                          --ytmusic-brand-background-secondary: #101a13 !important;
+                                                          --ytmusic-brand-background-solid: #101a13 !important;
+                                                          --ytmusic-brand-text-primary: #f4fff6 !important;
+                                                          --ytmusic-brand-text-secondary: #a9b9ad !important;
+                                                          --ytmusic-brand-link: #8ee6a5 !important;
+                                                          --ytmusic-color-black1: #080d0a !important;
+                                                          --ytmusic-color-black2: #101a13 !important;
+                                                          --ytmusic-color-black3: #17251b !important;
+                                                          --ytmusic-color-white1: #f4fff6 !important;
+                                                          --ytmusic-color-white2: #c3d2c7 !important;
+                                                          --ytmusic-color-white3: #91a497 !important;
+                                                          --ytmusic-color-green: #8ee6a5 !important;
+                                                        }
+                                                        html, body, ytmusic-app, ytmusic-app-layout,
+                                                        ytmusic-browse-response, ytmusic-search-page,
+                                                        ytmusic-player-page, #content, #layout {
+                                                          background: #080d0a !important;
+                                                          color: #f4fff6 !important;
+                                                        }
+                                                        yt-button-shape button, tp-yt-paper-button,
+                                                        ytmusic-chip-cloud-chip-renderer,
+                                                        .ytmusic-nav-bar {
+                                                          --yt-spec-call-to-action: #8ee6a5 !important;
+                                                        }
+                                                        a, yt-formatted-string[is-link] {
+                                                          color: #a1edb3 !important;
+                                                        }
+                                                        ytmusic-player-bar, ytmusic-player-page,
+                                                        ytmusic-menu-renderer, tp-yt-paper-dialog {
+                                                          background-color: #101a13 !important;
+                                                        }
+                                                      `;
+                                                      if (location.pathname.indexOf('/search') === 0) {
+                                                        var findSongs = function() {
+                                                          var candidates = Array.from(document.querySelectorAll(
+                                                            'ytmusic-chip-cloud-chip-renderer, button, tp-yt-paper-button'
+                                                          ));
+                                                          var chip = candidates.find(function(el) {
+                                                            var t = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                                            return t === 'songs' || t === 'песни';
+                                                          });
+                                                          if (chip && !chip.hasAttribute('data-tuno-filtered')) {
+                                                            chip.setAttribute('data-tuno-filtered', '1');
+                                                            chip.click();
+                                                          }
+                                                        };
+                                                        findSongs();
+                                                        if (window.__tunoSongFilterObserver) window.__tunoSongFilterObserver.disconnect();
+                                                        window.__tunoSongFilterObserver = new MutationObserver(findSongs);
+                                                        if (document.body) window.__tunoSongFilterObserver.observe(document.body, {childList:true,subtree:true});
+                                                      }
+                                                    })();
+                                                """.trimIndent()
+                                                view.evaluateJavascript(tuneUiScript, null)
+                                            }
+                                        }
                                         tag = youtubeMusicUrl
                                         loadUrl(youtubeMusicUrl)
                                     }
