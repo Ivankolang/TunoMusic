@@ -2556,13 +2556,24 @@ private fun TunoScreen(context: Context, controllerProvider: () -> MediaControll
                     onNext = { if (playbackQueue.isNotEmpty()) playNextPlaybackQueueItem() else controllerProvider()?.let { if (it.hasNextMediaItem()) it.seekToNextMediaItem() } }
                 )
             }
-            NavigationBar(containerColor = Color(0xFF101713), tonalElevation = 0.dp) {
+            NavigationBar(
+                modifier = Modifier.height(62.dp),
+                containerColor = Color(0xFF101713),
+                tonalElevation = 0.dp,
+                windowInsets = WindowInsets(0, 0, 0, 0)
+            ) {
                 NavigationBarItem(selected = tab == 2, onClick = { tab = 2; homeSearchOpen = false; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.Home, null) }, label = { Text("Дом") })
+                    modifier = Modifier.padding(vertical = 0.dp),
+                    icon = { Icon(Icons.Default.Home, null, modifier = Modifier.size(21.dp)) },
+                    label = { Text("Дом", fontSize = 10.sp) })
                 NavigationBarItem(selected = tab == 0 || tab == 1 || tab == 3, onClick = { tab = 0; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.LibraryMusic, null) }, label = { Text("Медиатека") })
+                    modifier = Modifier.padding(vertical = 0.dp),
+                    icon = { Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(21.dp)) },
+                    label = { Text("Медиатека", fontSize = 10.sp) })
                 NavigationBarItem(selected = tab == 4, onClick = { tab = 4; activePlaylistId = null },
-                    icon = { Icon(Icons.Default.Radio, null) }, label = { Text("Радио") })
+                    modifier = Modifier.padding(vertical = 0.dp),
+                    icon = { Icon(Icons.Default.Radio, null, modifier = Modifier.size(21.dp)) },
+                    label = { Text("Радио", fontSize = 10.sp) })
             }
         }
     }
@@ -3151,7 +3162,7 @@ private fun HomeDashboard(
                 }
             }
         }
-        item {
+    }
             AndroidView(
                 modifier = Modifier.size(1.dp).alpha(0.01f),
             factory = { ctx ->
@@ -3199,8 +3210,6 @@ private fun HomeDashboard(
                 }
                 }
             )
-        }
-    }
     }
 }
 
@@ -3363,6 +3372,9 @@ private fun FullPlayerScreen(
             Text("СЕЙЧАС ИГРАЕТ", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onQueue) { Icon(Icons.Default.QueueMusic, "Очередь", tint = Green) }
+            IconButton(onClick = onShuffle) {
+                Icon(Icons.Default.Shuffle, "Перемешивание", tint = if (shuffleEnabled) Green else Color.White.copy(alpha = 0.72f))
+            }
             if (cloudTrack == null) IconButton(onClick = onRename) { Icon(Icons.Default.MoreHoriz, null, tint = Color.White) }
         }
         Spacer(Modifier.height(18.dp))
@@ -3396,7 +3408,7 @@ private fun FullPlayerScreen(
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Перемешивание", tint = if (shuffleEnabled) Green else Color.White.copy(alpha = 0.72f), modifier = Modifier.size(25.dp)) }
+            Spacer(Modifier.width(4.dp))
             IconButton(onClick = onFavorite) { Icon(if (displayFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (displayFavorite) Green else Color.White, modifier = Modifier.size(28.dp)) }
             IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(38.dp)) }
             IconButton(onClick = onPlayPause, modifier = Modifier.size(68.dp).graphicsLayer { scaleX = if (playing) pulse else 1f; scaleY = if (playing) pulse else 1f }.background(Color.White, CircleShape)) {
